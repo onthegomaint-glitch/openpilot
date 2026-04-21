@@ -72,8 +72,18 @@ export function negotiate(pc) {
     var offer = pc.localDescription;
     return offerRtcRequest(offer.sdp, offer.type);
   }).then(function(response) {
-    console.log(response);
-    return response.json();
+    if (!response.ok) {
+      return response.text().then((body) => {
+        throw new Error(`Offer request failed (${response.status}): ${body}`);
+      });
+    }
+    return response.text().then((body) => {
+      try {
+        return JSON.parse(body);
+      } catch (_err) {
+        throw new Error(`Offer response was not JSON: ${body}`);
+      }
+    });
   }).then(function(answer) {
     return pc.setRemoteDescription(answer);
   }).catch(function(e) {
