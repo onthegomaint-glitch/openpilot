@@ -51,45 +51,18 @@
               </div>
               <p class="bi bi-battery-half small"> battery</p>
             </div>
+            <div class="icon-sub-panel">
+              <div class="icon-sub-sub-panel">
+                <i id="device-voltage" class="pre-blob1">-</i>
+              </div>
+              <p class="bi bi-lightning-charge small"> device volts</p>
+            </div>
           </div>
         </div>
         <!-- <div class="icon-sub-panel">
                 <button type="button" id="start" class="btn btn-light btn-lg">Start</button>
                 <button type="button" id="stop" class="btn btn-light btn-lg">Stop</button>
             </div> -->
-      </div>
-      <div class="row" style="width: 100%; padding: 0px 10px 0px 10px;">
-        <div id="wasd" class="col-md-12 row">
-          <div class="col-md-6 col-sm-12" style="justify-content: center; display: flex; flex-direction: column;">
-            <div class="wasd-row">
-              <div class="keys" id="key-w">W</div>
-              <div id="key-val"><span id="pos-vals">0,0</span><span>x,y</span></div>
-            </div>
-            <div class="wasd-row">
-              <div class="keys" id="key-a">A</div>
-              <div class="keys" id="key-s">S</div>
-              <div class="keys" id="key-d">D</div>
-            </div>
-          </div>
-          <div class="col-md-6 col-sm-12 form-group plan-form">
-            <label for="plan-text">Plan (w, a, s, d, t)</label>
-            <label style="font-size: 15px;" for="plan-text">*Extremely Experimental*</label>
-            <textarea class="form-control" id="plan-text" rows="7" placeholder="1,0,0,0,2"></textarea>
-            <button type="button" id="plan-button" class="btn btn-light btn-lg">Execute</button>
-          </div>
-        </div>
-      </div>
-      <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
-        <div class="panel row">
-          <div class="col-sm-3" style="text-align: center;">
-            <p>Play Sounds</p>
-          </div>
-          <div class="btn-group col-sm-8">
-            <button type="button" id="sound-engage" class="btn btn-outline-success btn-lg sound">Engage</button>
-            <button type="button" id="sound-disengage" class="btn btn-outline-warning btn-lg sound">Disengage</button>
-            <button type="button" id="sound-error" class="btn btn-outline-danger btn-lg sound">Error</button>
-          </div>
-        </div>
       </div>
       <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
         <div class="panel row">
@@ -98,13 +71,32 @@
         </div>
       </div>
       <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
+        <div class="panel row controls-panel" id="auth-panel">
+          <div class="col-sm-4 col-12"><input id="auth-username" class="token-input" placeholder="Username"></div>
+          <div class="col-sm-4 col-12"><input id="auth-password" type="password" class="token-input" placeholder="Password"></div>
+          <div class="col-sm-2 col-6"><button id="auth-login" class="btn btn-primary w-100">Login</button></div>
+          <div class="col-sm-2 col-6"><button id="auth-setup" class="btn btn-secondary w-100">Setup</button></div>
+          <div id="auth-result" class="col-12 command-result">Not authenticated</div>
+        </div>
+      </div>
+      <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
         <div class="panel row controls-panel">
           <div class="col-12">
             <input id="local-token" type="password" placeholder="Local token" class="token-input" />
           </div>
           <div class="col-sm-4 col-12"><button id="cmd-remote-start" class="btn btn-danger w-100">Request Remote Start</button></div>
+          <div class="col-12 remote-start-ac">
+            <div class="row g-2">
+              <div class="col-sm-3 col-6"><label><input id="ac-enabled" type="checkbox" checked> A/C On</label></div>
+              <div class="col-sm-3 col-6"><label><input id="ac-front-defrost" type="checkbox"> Front Defrost</label></div>
+              <div class="col-sm-3 col-6"><label>Temp C <input id="ac-temp-c" type="number" min="16" max="30" value="21" class="form-control form-control-sm"></label></div>
+              <div class="col-sm-3 col-6"><label>Fan 0-5 <input id="ac-fan-level" type="number" min="0" max="5" value="2" class="form-control form-control-sm"></label></div>
+            </div>
+          </div>
           <div class="col-sm-4 col-12"><button id="cmd-charge-start" class="btn btn-success w-100">Start Charging</button></div>
           <div class="col-sm-4 col-12"><button id="cmd-charge-stop" class="btn btn-warning w-100">Stop Charging</button></div>
+          <div class="col-sm-4 col-12"><button id="cmd-sentry-toggle" class="btn btn-primary w-100">Toggle Sentry Mode</button></div>
+          <div id="sentry-result" class="col-12 command-result">Sentry mode: unknown</div>
           <div id="command-result" class="col-12 command-result">-</div>
         </div>
       </div>

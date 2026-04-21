@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import dataclasses
 import hashlib
@@ -5,8 +7,10 @@ import ipaddress
 import json
 import logging
 import os
+import secrets
 import ssl
 import subprocess
+import time
 
 import pyaudio
 import wave
@@ -36,7 +40,10 @@ COMMAND_PARAMS = {
   "remote_start": "LanRemoteStartRequested",
   "charge_start": "LanChargeStartRequested",
   "charge_stop": "LanChargeStopRequested",
+  "sentry_toggle": "LanSentryModeEnabled",
 }
+SESSION_COOKIE = "lan_session"
+SESSION_TTL_SECONDS = 60 * 60 * 24
 
 
 @dataclasses.dataclass
@@ -76,6 +83,42 @@ def _verify_local_auth(request: 'web.Request'):
     raise web.HTTPForbidden(text="Local network access only")
   if not _is_authorized(request):
     raise web.HTTPUnauthorized(text="Invalid token")
+
+
+def _read_auth_config(params: Params | None) -> dict:
+  if params is None:
+    return {}
+  cfg = params.get("LanAuthConfig", return_default=True)
+  return cfg if isinstance(cfg, dict) else {}
+
+
+def _hash_password(password: str, salt: str) -> str:
+  return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000).hex()
+
+
+def _verify_session(request: 'web.Request') -> bool:
+  session_token = request.cookies.get(SESSION_COOKIE)
+  if not session_token:
+    return False
+
+  sessions = request.app["sessions"]
+  session = sessions.get(session_token)
+  if session is None:
+    return False
+
+  now = int(time.time())
+  if now > session["expiresAt"]:
+    del sessions[session_token]
+    return False
+  return True
+
+
+def _verify_access(request: 'web.Request'):
+  if not _is_private_request(request):
+    raise web.HTTPForbidden(text="Local network access only")
+  if _verify_session(request) or _is_authorized(request):
+    return
+  raise web.HTTPUnauthorized(text="Login required")
 
 
 ## UTILS
@@ -155,23 +198,60 @@ async def sound(request: 'web.Request'):
 
 
 def _read_vehicle_status(sm) -> dict:
-  sm.update(0)
-  car_state = sm["carState"]
-  fuel_gauge = float(getattr(car_state, "fuelGauge", 0.0))
+  fuel_gauge = 0.0
+  charging = False
+  ignition_on = False
+  standstill = False
+  gear = "unknown"
+  updated = False
+  valid = False
+  log_mono_time = 0
+
+  if sm is not None:
+    sm.update(0)
+    car_state = sm["carState"]
+    fuel_gauge = float(getattr(car_state, "fuelGauge", 0.0))
+    charging = bool(getattr(car_state, "charging", False))
+    ignition_on = bool(getattr(car_state, "ignitionLine", False) or getattr(car_state, "ignitionCan", False))
+    standstill = bool(getattr(car_state, "standstill", False))
+    gear = str(getattr(car_state, "gearShifter", "unknown"))
+    updated = bool(sm.updated.get("carState", False))
+    valid = bool(sm.valid.get("carState", False))
+    log_mono_time = int(sm.logMonoTime.get("carState", 0))
+
+  device_voltage = 0.0
+  if Params is not None:
+    cap = Params()
+    car_batt = cap.get("CarBatteryCapacity", return_default=True)
+    if isinstance(car_batt, (int, float)):
+      device_voltage = float(car_batt)
+
+  sentry_enabled = False
+  remote_start_config = {}
+  if Params is not None:
+    cap = Params()
+    sentry_enabled = bool(cap.get_bool("LanSentryModeEnabled"))
+    cfg = cap.get("LanRemoteStartConfig", return_default=True)
+    if isinstance(cfg, dict):
+      remote_start_config = cfg
+
   return {
     "batteryPercent": round(fuel_gauge * 100, 1),
-    "charging": bool(getattr(car_state, "charging", False)),
-    "ignitionOn": bool(getattr(car_state, "ignitionLine", False) or getattr(car_state, "ignitionCan", False)),
-    "standstill": bool(getattr(car_state, "standstill", False)),
-    "gear": str(getattr(car_state, "gearShifter", "unknown")),
-    "updated": bool(sm.updated.get("carState", False)),
-    "valid": bool(sm.valid.get("carState", False)),
-    "logMonoTime": int(sm.logMonoTime.get("carState", 0)),
+    "charging": charging,
+    "ignitionOn": ignition_on,
+    "standstill": standstill,
+    "gear": gear,
+    "updated": updated,
+    "valid": valid,
+    "logMonoTime": log_mono_time,
+    "deviceVoltage": round(device_voltage, 2),
+    "sentryEnabled": sentry_enabled,
+    "remoteStartConfig": remote_start_config,
   }
 
 
 async def api_config(request: 'web.Request'):
-  _verify_local_auth(request)
+  _verify_access(request)
   return web.json_response({
     "ok": True,
     "tokenHint": "Use X-Local-Token header with the generated token from logs",
@@ -179,17 +259,84 @@ async def api_config(request: 'web.Request'):
 
 
 async def api_status(request: 'web.Request'):
-  _verify_local_auth(request)
+  _verify_access(request)
   sm = request.app["status_sm"]
-  if sm is None:
-    return web.json_response({"ok": True, "status": {"batteryPercent": 0.0, "charging": False, "updated": False, "valid": False, "statusAvailable": False}})
   status = _read_vehicle_status(sm)
   status["statusAvailable"] = True
   return web.json_response({"ok": True, "status": status})
 
 
+async def api_auth_status(request: 'web.Request'):
+  params = request.app["params"]
+  auth_cfg = _read_auth_config(params)
+  return web.json_response({
+    "ok": True,
+    "setupRequired": "username" not in auth_cfg,
+    "authenticated": _verify_session(request),
+  })
+
+
+async def api_auth_setup(request: 'web.Request'):
+  if not _is_private_request(request):
+    raise web.HTTPForbidden(text="Local network access only")
+  params = request.app["params"]
+  if params is None:
+    return web.json_response({"ok": False, "error": "Params backend unavailable on this host"}, status=503)
+
+  auth_cfg = _read_auth_config(params)
+  if "username" in auth_cfg:
+    return web.json_response({"ok": False, "error": "Auth already configured"}, status=409)
+
+  payload = await request.json()
+  username = str(payload.get("username", "")).strip()
+  password = str(payload.get("password", ""))
+  if len(username) < 3 or len(password) < 8:
+    return web.json_response({"ok": False, "error": "Username/password too short"}, status=400)
+
+  salt = secrets.token_hex(16)
+  params.put("LanAuthConfig", {
+    "username": username,
+    "salt": salt,
+    "passwordHash": _hash_password(password, salt),
+  })
+  return web.json_response({"ok": True})
+
+
+async def api_auth_login(request: 'web.Request'):
+  if not _is_private_request(request):
+    raise web.HTTPForbidden(text="Local network access only")
+  params = request.app["params"]
+  auth_cfg = _read_auth_config(params)
+  if "username" not in auth_cfg:
+    return web.json_response({"ok": False, "error": "Run setup first"}, status=400)
+
+  payload = await request.json()
+  username = str(payload.get("username", "")).strip()
+  password = str(payload.get("password", ""))
+
+  if username != auth_cfg["username"]:
+    return web.json_response({"ok": False, "error": "Invalid credentials"}, status=401)
+  if _hash_password(password, auth_cfg["salt"]) != auth_cfg["passwordHash"]:
+    return web.json_response({"ok": False, "error": "Invalid credentials"}, status=401)
+
+  token = secrets.token_urlsafe(32)
+  request.app["sessions"][token] = {"username": username, "expiresAt": int(time.time()) + SESSION_TTL_SECONDS}
+  response = web.json_response({"ok": True})
+  response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Strict", max_age=SESSION_TTL_SECONDS, secure=False)
+  return response
+
+
+async def api_auth_logout(request: 'web.Request'):
+  token = request.cookies.get(SESSION_COOKIE)
+  if token:
+    request.app["sessions"].pop(token, None)
+  response = web.json_response({"ok": True})
+  response.del_cookie(SESSION_COOKIE)
+  return response
+
+
 async def api_command(request: 'web.Request'):
-  _verify_local_auth(request)
+  _verify_access(request)
   command = request.match_info["name"]
   if command not in COMMAND_PARAMS:
     raise web.HTTPBadRequest(text="Unknown command")
@@ -197,6 +344,28 @@ async def api_command(request: 'web.Request'):
   params = request.app["params"]
   if params is None:
     return web.json_response({"ok": False, "error": "Params backend unavailable on this host"}, status=503)
+  payload = {}
+  try:
+    payload = await request.json()
+  except Exception:
+    payload = {}
+
+  if command == "sentry_toggle":
+    current = params.get_bool("LanSentryModeEnabled")
+    params.put_bool("LanSentryModeEnabled", not current)
+    return web.json_response({"ok": True, "requested": command, "enabled": (not current)})
+
+  if command == "remote_start" and isinstance(payload, dict):
+    ac_cfg = payload.get("ac", {})
+    if isinstance(ac_cfg, dict):
+      safe_cfg = {
+        "enabled": bool(ac_cfg.get("enabled", True)),
+        "temperatureC": float(ac_cfg.get("temperatureC", 21.0)),
+        "fanLevel": int(ac_cfg.get("fanLevel", 2)),
+        "frontDefrost": bool(ac_cfg.get("frontDefrost", False)),
+      }
+      params.put("LanRemoteStartConfig", safe_cfg)
+
   command_param = COMMAND_PARAMS[command]
   params.put_bool(command_param, False)
   params.put_bool(command_param, True)
@@ -205,6 +374,7 @@ async def api_command(request: 'web.Request'):
 
 
 async def offer(request: 'web.Request'):
+  _verify_access(request)
   params = await request.json()
   body = StreamRequestBody(params["sdp"], ["driver"], ["testJoystick"], ["carState"])
   body_json = json.dumps(dataclasses.asdict(body))
@@ -228,11 +398,16 @@ def main():
   app = web.Application()
   app["params"] = Params() if Params is not None else None
   app["status_sm"] = messaging.SubMaster(["carState"]) if messaging is not None else None
+  app["sessions"] = {}
   logger.info("Local control token: %s", _expected_token())
   app.router.add_get("/", index)
   app.router.add_get("/ping", ping, allow_head=True)
   app.router.add_post("/offer", offer)
   app.router.add_post("/sound", sound)
+  app.router.add_get("/api/auth/status", api_auth_status)
+  app.router.add_post("/api/auth/setup", api_auth_setup)
+  app.router.add_post("/api/auth/login", api_auth_login)
+  app.router.add_post("/api/auth/logout", api_auth_logout)
   app.router.add_get("/api/config", api_config)
   app.router.add_get("/api/status", api_status)
   app.router.add_post("/api/command/{name}", api_command)

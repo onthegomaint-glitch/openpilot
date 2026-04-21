@@ -203,3 +203,10 @@ video {
   text-align: center;
   margin-top: 8px;
 }
+
+.remote-start-ac {
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 8px;
+}
