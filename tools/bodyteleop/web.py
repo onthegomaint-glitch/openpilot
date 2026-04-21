@@ -60,7 +60,7 @@ def _is_private_request(request: 'web.Request') -> bool:
 
 def _expected_token() -> str:
   if Params is not None:
-    raw = Params().get("DongleId", encoding="utf-8") or "sunnypilot-local"
+    raw = Params().get("DongleId") or "sunnypilot-local"
   else:
     raw = "sunnypilot-local"
   return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
