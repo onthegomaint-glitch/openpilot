@@ -171,8 +171,21 @@ export function start(pc, dc) {
   const textDecoder = new TextDecoder();
   var carStaterIndex = 0;
   dc.onmessage = function(evt) {
-    const text = textDecoder.decode(evt.data);
-    const msg = JSON.parse(text);
+    let text = "";
+    if (typeof evt.data === "string") {
+      text = evt.data;
+    } else {
+      text = textDecoder.decode(evt.data);
+    }
+
+    let msg = null;
+    try {
+      msg = JSON.parse(text);
+    } catch (_err) {
+      // Ignore non-JSON data channel frames from other peers/services.
+      return;
+    }
+
     if (carStaterIndex % 100 == 0 && msg.type === 'carState') {
       const batteryLevel = Math.round(msg.data.fuelGauge * 100);
       $("#battery").text(batteryLevel + "%");
