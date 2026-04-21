@@ -183,3 +183,23 @@ video {
   display: flex;
   padding: 0px 10px 0px 10px;
 }
+
+.controls-panel {
+  gap: 8px;
+}
+
+.token-input {
+  width: 100%;
+  background: #111;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.command-result {
+  font-size: 18px;
+  text-align: center;
+  margin-top: 8px;
+}

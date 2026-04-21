@@ -97,6 +97,17 @@
           <div class="col-sm-6"><canvas id="chart-battery"></canvas></div>
         </div>
       </div>
+      <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
+        <div class="panel row controls-panel">
+          <div class="col-12">
+            <input id="local-token" type="password" placeholder="Local token" class="token-input" />
+          </div>
+          <div class="col-sm-4 col-12"><button id="cmd-remote-start" class="btn btn-danger w-100">Request Remote Start</button></div>
+          <div class="col-sm-4 col-12"><button id="cmd-charge-start" class="btn btn-success w-100">Start Charging</button></div>
+          <div class="col-sm-4 col-12"><button id="cmd-charge-stop" class="btn btn-warning w-100">Stop Charging</button></div>
+          <div id="command-result" class="col-12 command-result">-</div>
+        </div>
+      </div>
     </div>
     <script src="/static/js/jsmain.js" type="module"></script>
   </body>
