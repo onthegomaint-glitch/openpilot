@@ -15,7 +15,8 @@ export MODEL
 
 # Start loggerd watchdog automatically on boot/power-on if installed.
 # Run with bash so the script need not be chmod +x (e.g. after checkout).
-if [ -f "$WATCHDOG_SH" ] && ! pgrep -f "loggerd_watchdog.sh" >/dev/null 2>&1; then
+# Match both legacy name (/data/loggerd_watchdog/watchdog.sh) and scripts/loggerd_watchdog.sh
+if [ -f "$WATCHDOG_SH" ] && ! pgrep -f "loggerd_watchdog.sh|/data/loggerd_watchdog/watchdog.sh" >/dev/null 2>&1; then
   mkdir -p /data/loggerd_watchdog
   nohup bash "$WATCHDOG_SH" >>/data/loggerd_watchdog/watchdog.out 2>&1 < /dev/null &
 fi
