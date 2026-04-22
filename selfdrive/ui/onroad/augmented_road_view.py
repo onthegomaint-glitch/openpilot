@@ -27,6 +27,8 @@ BORDER_COLORS = {
 
 WIDE_CAM_MAX_SPEED = 10.0  # m/s (22 mph)
 ROAD_CAM_MIN_SPEED = 15.0  # m/s (34 mph)
+# When turn signals are on, show wide FOV at low speed (m/s ≈ 20 mph).
+TURN_SIGNAL_WIDE_MAX_MPS = 20.0 * 0.44704
 
 
 class AugmentedRoadView(CameraView):
@@ -111,17 +113,24 @@ class AugmentedRoadView(CameraView):
     rl.draw_rectangle_lines_ex(rect, UI_BORDER_SIZE, border_color)
 
   def _switch_stream_if_needed(self, sm):
-    if sm['selfdriveState'].experimentalMode and WIDE_CAM in self.available_streams:
-      v_ego = sm['carState'].vEgo
-      if v_ego < WIDE_CAM_MAX_SPEED:
-        target = WIDE_CAM
-      elif v_ego > ROAD_CAM_MIN_SPEED:
-        target = ROAD_CAM
-      else:
-        # Hysteresis zone - keep current stream
-        target = self.stream_type
-    else:
+    if WIDE_CAM not in self.available_streams:
       target = ROAD_CAM
+    else:
+      cs = sm['carState']
+      # Prefer wide while signaling at parking / turning speeds (no Experimental Mode required).
+      if (cs.leftBlinker or cs.rightBlinker) and abs(cs.vEgo) < TURN_SIGNAL_WIDE_MAX_MPS:
+        target = WIDE_CAM
+      elif sm['selfdriveState'].experimentalMode:
+        v_ego = cs.vEgo
+        if v_ego < WIDE_CAM_MAX_SPEED:
+          target = WIDE_CAM
+        elif v_ego > ROAD_CAM_MIN_SPEED:
+          target = ROAD_CAM
+        else:
+          # Hysteresis zone - keep current stream
+          target = self.stream_type
+      else:
+        target = ROAD_CAM
 
     if self.stream_type != target:
       self.switch_stream(target)
