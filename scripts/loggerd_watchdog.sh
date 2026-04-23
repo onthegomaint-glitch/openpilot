@@ -74,7 +74,8 @@ snapshot() {
     echo "\n[dmesg tail]"; dmesg 2>/dev/null | tail -n 120
     echo "\n[recent realdata]"; ls -lt /data/media/0/realdata 2>/dev/null | head -n 30
     echo "\n[recent swaglog files]"; ls -lt /data/log/swaglog.* 2>/dev/null | head -n 10
-    echo "\n[swaglog grep]"; grep -hEi 'loggerd|encoderd|process_not_running|i/o error|no space left|segfault' /data/log/swaglog.* 2>/dev/null | tail -n 200
+    # Do not match bare "loggerd" (hits uploader path, "starting process loggerd", etc.)
+    echo "\n[swaglog grep]"; grep -hEi 'process_not_running|loggerd is dead|encoderd is dead|watchdog timeout.*loggerd|i/o error|no space left|segfault' /data/log/swaglog.* 2>/dev/null | tail -n 200
   } > "$f" 2>&1
   echo "[$(date -Iseconds)] snapshot saved: $f" >> "$RING_LOG"
   enforce_quota
@@ -103,8 +104,8 @@ error_watch_loop() {
   # shellcheck disable=SC2012
   tail -n 0 -F /data/log/swaglog.* 2>/dev/null | while IFS= read -r line; do
     lower=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
-    # Avoid matching "traceback" inside long JSON log lines; prefer loggerd/encoderd/process and I/O.
-    if printf '%s' "$lower" | grep -Eq 'loggerd|encoderd|process_not_running|i/o error|no space left|segfault'; then
+    # Tight: avoid "system/loggerd/uploader.py" and "starting process loggerd" (noise).
+    if printf '%s' "$lower" | grep -Eq 'process_not_running|loggerd is dead|encoderd is dead|watchdog timeout.*loggerd|i/o error|no space left|segfault'; then
       echo "[$(date -Iseconds)] $line" >> "$RING_LOG"
       snapshot "error"
     fi
