@@ -1,102 +1,57 @@
-# Session handoff — LAN phone control for sunnypilot
+# Session handoff — sunnypilot / LAN control / UI
 
-Last updated: 2026-04-21 (end of night).
+Last updated: 2026-04-22.
 
-## Current state
+## Repos and branch
 
-- Fork/repo used by installer: `https://github.com/onthegomaint-glitch/openpilot`
-- Branch on device and PC: `staging-tici`
-- Latest useful commits:
-  - `b9a5c067e` Handle non-JSON or error `/offer` responses
-  - `5678507a4` Ignore non-JSON WebRTC data-channel frames
-  - `8a8e3b1` Fix `Params().get("DongleId")` call on device
-  - `e4b8ba1` Core LAN API/UI feature commit
-- Device confirmed on latest (`git log` on comma showed `5678507` and `8a8e3b1`; `b9a5c067e` pushed at end of session)
+- **Active fork (GitHub):** `https://github.com/ravenskys/openpilot` (transferred from `onthegomaint-glitch/openpilot`)
+- **Branch:** `staging-tici`
+- **Local remote name:** `fork` → `https://github.com/ravenskys/openpilot.git`
+- **Upstream in clone:** `origin` may still point at `sunnypilot/sunnypilot` for merges; use `fork` to push this work
 
-## What works
+## Recent commits (landscape)
 
-- Custom installer path works with repo name `openpilot`:
-  - `installer.comma.ai/onthegomaint-glitch/staging-tici`
-  - short form on device also works: `onthegomaint-glitch/staging-tici`
-- `tools/bodyteleop/web.py` runs on comma and serves HTTPS on `:5000`
-- LAN token auth works (`X-Local-Token` / UI token box)
-- `/api/status` returns JSON correctly
+- On-road **FREEZE** diagnostic snapshot button → `/data/freeze_frames/freeze_*.txt` (`selfdrive/ui/onroad/freeze_frame*.py`, `hud_renderer.py`)
+- **Wide road camera** when turn signal on and speed under ~20 mph (`augmented_road_view.py`)
+- **Loggerd watchdog** on device: `/data/loggerd_watchdog/`, 1 GiB cap, `scripts/loggerd_watchdog.sh`, autostart from `launch_openpilot.sh`
+- **LAN auth** + remote start A/C + sentry UI + `future` annotations fix for Windows `web.py` import
+- `HANDOFF.md` + bodyteleop / params work as in earlier history
 
-## Known blocker at end of session
+## What works (high level)
 
-Main failure is now audio-related in `webrtcd`, not token/network:
+- `tools/bodyteleop/web.py` — LAN API, auth, commands, static UI
+- Comma installer URL style: `installer.comma.ai/ravenskys/staging-tici` (verify exact path if installer changed)
+- Device: pull `staging-tici` from `ravenskys/openpilot`; set `git remote` if you still have old URL
 
-- `OSError: [Errno -9985] Device unavailable` from `system/webrtc/device/audio.py`
-- This can break stream session after `/offer`
-- Logs showed stream sessions connecting then ending; ALSA/JACK warnings are noisy but expected, the fatal line is `-9985`
+## On-device paths worth knowing
 
-## Runbook to resume tomorrow
+| Path | Purpose |
+|------|--------|
+| `/data/freeze_frames/` | User-tapped **FREEZE** text snapshots |
+| `/data/loggerd_watchdog/` | Auto health + error/freeze logs for loggerd/encoderd |
+| `/data/media/0/realdata/` | Route video / rlogs |
+| `/data/openpilot/` | Repo checkout |
 
-### 1) SSH into comma
+## Known issues / next steps (from prior sessions)
 
-From Windows PowerShell:
+- **webrtcd / bodyteleop:** audio `-9985 Device unavailable` may still need audio disabled in offer path for reliable streaming
+- **Params `Lan*Requested`:** still flags; vehicle-side actuation for remote start / charge is separate work
+- **Sentry / device voltage in UI:** partly placeholder telemetry
+
+## Quick SSH (example)
 
 ```powershell
-ssh -i "$env:USERPROFILE\.ssh\id_ed25519" comma@192.168.86.234
+ssh comma@192.168.86.234
 ```
 
-### 2) Run `webrtcd` and `bodyteleop` in separate terminals
+IP may change on LAN; use device’s current address.
 
-Terminal A (comma shell):
+## Resume points
 
-```bash
-cd /data/openpilot
-PYTHONPATH=/data/openpilot python3 system/webrtc/webrtcd.py --host 0.0.0.0 --port 5001
-```
+1. Rebuild / restart UI on comma after UI pulls so **FREEZE** and **wide-on-blinker** are active
+2. Copy diagnostics: `scp comma@<ip>:/data/freeze_frames/freeze_*.txt .` and `.../data/loggerd_watchdog/snapshot_*.log` as needed
+3. Continue webrtcd audio hardening if phone camera path still fails
 
-Terminal B (comma shell):
+## Git notes
 
-```bash
-cd /data/openpilot
-PYTHONPATH=/data/openpilot python3 tools/bodyteleop/web.py
-```
-
-### 3) Verify ports on comma
-
-```bash
-ss -tlnp | grep -E ':5000|:5001'
-```
-
-### 4) Browser checks
-
-- Open: `https://192.168.86.234:5000/?v=5` (or increment query to bust cache)
-- Use current token from web.py log
-- `https://192.168.86.234:5000/ping` should return `pong`
-
-### 5) Likely next fix
-
-Disable audio negotiation for bodyteleop stream to avoid `-9985` device errors, then re-test video and controls.
-
-## Feature summary implemented
-
-- Added LAN-only authenticated API endpoints in `tools/bodyteleop/web.py`:
-  - `GET /api/status`
-  - `POST /api/command/remote_start`
-  - `POST /api/command/charge_start`
-  - `POST /api/command/charge_stop`
-- Added phone UI controls and token input:
-  - `tools/bodyteleop/static/index.html`
-  - `tools/bodyteleop/static/js/jsmain.js`
-  - `tools/bodyteleop/static/main.css`
-- Added param keys:
-  - `LanRemoteStartRequested`
-  - `LanChargeStartRequested`
-  - `LanChargeStopRequested`
-
-Important: these params are only request flags. Vehicle-specific actuator logic is still needed for real remote start/charge control.
-
-## Notes
-
-- Keep Git identity as:
-  - `user.name = otg`
-  - `user.email = onthegomaint-glitch@users.noreply.github.com`
-- `otgpilot` duplicate repo is no longer needed; active remote is `openpilot`
-
----
-
-Resume point: fix/disable audio path in webrtcd session setup so offer succeeds and video stays up reliably.
+- If commits should show a specific identity, set `user.name` / `user.email` on the machine you commit from; do not commit secrets.
