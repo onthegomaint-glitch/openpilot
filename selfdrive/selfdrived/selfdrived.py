@@ -135,12 +135,13 @@ class SelfdriveD(CruiseHelper):
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
-    # some comma three with NVMe experience NVMe dropouts mid-drive that
-    # cause loggerd to crash on write, so ignore it only on that platform
+    # loggerd (native) can die briefly (storage I/O, camera/encoder backpressure, bugs) and
+    # then restart. Upstream only ignored it for some tici+NVMe configs; eMMC/SD setups
+    # still got "Process Not Running" and could not engage. On tici, block engage on
+    # loggerd is worse than limping with reduced/unstable logging until manager restarts.
     self.ignored_processes = set()
-    nvme_expected = os.path.exists('/dev/nvme0n1') or (not os.path.isfile("/persist/comma/living-in-the-moment"))
-    if HARDWARE.get_device_type() == 'tici' and nvme_expected:
-      self.ignored_processes = {'loggerd', }
+    if HARDWARE.get_device_type() == 'tici':
+      self.ignored_processes.add('loggerd')
     self.ignored_processes.update({'mapd'})
 
     # Determine startup event
