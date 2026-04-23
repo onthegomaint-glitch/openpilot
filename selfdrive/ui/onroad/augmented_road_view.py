@@ -1,7 +1,8 @@
+import time
 import numpy as np
 import pyray as rl
 from collections.abc import Callable
-from cereal import log
+from cereal import car, log
 from msgq.visionipc import VisionStreamType
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus, UI_BORDER_SIZE
 from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer
@@ -10,6 +11,8 @@ from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.hardware import TICI
+from msgq.visionipc import VisionIpcClient
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
 from openpilot.common.transformations.orientation import rot_from_euler
 
@@ -29,6 +32,11 @@ WIDE_CAM_MAX_SPEED = 10.0  # m/s (22 mph)
 ROAD_CAM_MIN_SPEED = 15.0  # m/s (34 mph)
 # When turn signals are on, show wide FOV at low speed (m/s ≈ 20 mph).
 TURN_SIGNAL_WIDE_MAX_MPS = 20.0 * 0.44704
+
+
+def _speed_mps_for_wide(cs: car.CarState) -> float:
+  """Favor instrument cluster speed when present; use max to avoid false wide on highway."""
+  return max(abs(cs.vEgo), abs(cs.vEgoCluster))
 
 
 class AugmentedRoadView(CameraView):
@@ -53,6 +61,8 @@ class AugmentedRoadView(CameraView):
 
     # Callbacks
     self._click_callback: Callable | None = None
+    # Throttle VisionIpcClient.available_streams re-queries
+    self._next_stream_list_poll: float = 0.0
 
   def set_callbacks(self, on_click: Callable | None = None):
     self._click_callback = on_click
@@ -112,13 +122,33 @@ class AugmentedRoadView(CameraView):
     border_color = BORDER_COLORS.get(ui_state.status, BORDER_COLORS[UIStatus.DISENGAGED])
     rl.draw_rectangle_lines_ex(rect, UI_BORDER_SIZE, border_color)
 
+  def _wide_stream_available(self) -> bool:
+    if WIDE_CAM in self.available_streams:
+      return True
+    # `available_streams` is only set after the first successful VisionIpc connect; it can
+    # stay empty for a while. Re-query at a low rate until wide appears.
+    now = time.monotonic()
+    if now < self._next_stream_list_poll:
+      return TICI
+    self._next_stream_list_poll = now + 0.25
+    try:
+      s = VisionIpcClient.available_streams("camerad", False)
+    except (AttributeError, ValueError, RuntimeError):
+      return TICI
+    if s:
+      self.available_streams = list(s)
+    if WIDE_CAM in self.available_streams:
+      return True
+    return TICI
+
   def _switch_stream_if_needed(self, sm):
-    if WIDE_CAM not in self.available_streams:
+    if not self._wide_stream_available():
       target = ROAD_CAM
     else:
       cs = sm['carState']
+      v_spd = _speed_mps_for_wide(cs)
       # Prefer wide while signaling at parking / turning speeds (no Experimental Mode required).
-      if (cs.leftBlinker or cs.rightBlinker) and abs(cs.vEgo) < TURN_SIGNAL_WIDE_MAX_MPS:
+      if (cs.leftBlinker or cs.rightBlinker) and v_spd < TURN_SIGNAL_WIDE_MAX_MPS:
         target = WIDE_CAM
       elif sm['selfdriveState'].experimentalMode:
         v_ego = cs.vEgo
