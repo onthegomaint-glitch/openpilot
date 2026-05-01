@@ -4,7 +4,7 @@ import json
 import os
 from typing import Any
 
-from openpilot.common.params import Params, UnknownKeyName
+from openpilot.common.params import Params
 
 
 STATUS_PARAM = "LanRemoteStartStatus"
@@ -17,7 +17,7 @@ def read_remote_start_status(params: Params | None) -> dict[str, Any]:
       status = params.get(STATUS_PARAM, return_default=True)
       if isinstance(status, dict):
         return status
-    except UnknownKeyName:
+    except Exception:
       pass
 
   try:
@@ -35,7 +35,7 @@ def write_remote_start_status(params: Params | None, status: dict[str, Any]) -> 
     try:
       params.put(STATUS_PARAM, status)
       return
-    except UnknownKeyName:
+    except Exception:
       pass
 
   tmp_path = f"{STATUS_FALLBACK_PATH}.tmp"
