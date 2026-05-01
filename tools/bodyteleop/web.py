@@ -286,7 +286,7 @@ async def api_status(request: 'web.Request'):
 
 async def api_auth_status(request: 'web.Request'):
   params = request.app["params"]
-  auth_cfg = _read_auth_config(params)
+  auth_cfg = read_auth_config(params)
   return web.json_response({
     "ok": True,
     "setupRequired": "username" not in auth_cfg,
@@ -301,7 +301,7 @@ async def api_auth_setup(request: 'web.Request'):
   if params is None:
     return web.json_response({"ok": False, "error": "Params backend unavailable on this host"}, status=503)
 
-  auth_cfg = _read_auth_config(params)
+  auth_cfg = read_auth_config(params)
   if "username" in auth_cfg:
     return web.json_response({"ok": False, "error": "Auth already configured"}, status=409)
 
@@ -324,7 +324,7 @@ async def api_auth_login(request: 'web.Request'):
   if not _is_private_request(request):
     raise web.HTTPForbidden(text="Local network access only")
   params = request.app["params"]
-  auth_cfg = _read_auth_config(params)
+  auth_cfg = read_auth_config(params)
   if "username" not in auth_cfg:
     return web.json_response({"ok": False, "error": "Run setup first"}, status=400)
 
