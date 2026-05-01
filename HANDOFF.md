@@ -1,57 +1,84 @@
-# Session handoff — sunnypilot / LAN control / UI
+# Session Handoff - sunnypilot LAN control / UI
 
-Last updated: 2026-04-22.
+Last updated: 2026-05-01
 
-## Repos and branch
+## Repo
 
-- **Active fork (GitHub):** `https://github.com/ravenskys/openpilot` (transferred from `onthegomaint-glitch/openpilot`)
-- **Branch:** `staging-tici`
-- **Local remote name:** `fork` → `https://github.com/ravenskys/openpilot.git`
-- **Upstream in clone:** `origin` may still point at `sunnypilot/sunnypilot` for merges; use `fork` to push this work
+- GitHub fork: `https://github.com/ravenskys/openpilot`
+- Branch: `staging-tici`
+- Push remote: `fork` -> `https://github.com/ravenskys/openpilot.git`
+- `origin` may still point to `sunnypilot/sunnypilot`; use `fork` for this work
 
-## Recent commits (landscape)
+## Current status
 
-- On-road **FREEZE** diagnostic snapshot button → `/data/freeze_frames/freeze_*.txt` (`selfdrive/ui/onroad/freeze_frame*.py`, `hud_renderer.py`)
-- **Wide road camera** when turn signal on and speed under ~20 mph (`augmented_road_view.py`)
-- **Loggerd watchdog** on device: `/data/loggerd_watchdog/`, 1 GiB cap, `scripts/loggerd_watchdog.sh`, autostart from `launch_openpilot.sh`
-- **LAN auth** + remote start A/C + sentry UI + `future` annotations fix for Windows `web.py` import
-- `HANDOFF.md` + bodyteleop / params work as in earlier history
+- LAN control UI is wired up in `tools/bodyteleop/web.py` with auth, command endpoints, and a static phone UI.
+- `tools/bodyteleop/lancontrol.py` runs the LAN UI offroad without joystick debug mode.
+- Remote-start request plumbing exists end-to-end:
+  - `LanRemoteStartConfig` stores A/C, temp C, fan level, and front defrost.
+  - `LanRemoteStartRequested` is consumed by `tools/bodyteleop/remote_startd.py`.
+  - `LanRemoteStartStatus` is written back for the phone UI.
+- `tools/bodyteleop/remote_start_adapters.py` currently stops at a Hyundai Kona EV safety blocker instead of sending unknown CAN.
+- `tools/bodyteleop/capture_can_window.py` records timed CAN JSONL captures to `/data/bluelink_captures/`.
+- The phone UI includes a `Data Capture` tab for starting labeled capture windows.
+- `BLUELINK_CAPTURE_CHECKLIST.md` is the operator guide for capture runs.
+- UI changes already added:
+  - `FREEZE` diagnostic snapshots to `/data/freeze_frames/`
+  - Wide road camera on blinker below about 20 mph
+  - Offroad display gestures in `selfdrive/ui/ui_state.py`: 3 taps wake/extend display, 4 taps sleep display
+- Loggerd watchdog is present on device under `/data/loggerd_watchdog/`.
 
-## What works (high level)
+## Main blocker
 
-- `tools/bodyteleop/web.py` — LAN API, auth, commands, static UI
-- Comma installer URL style: `installer.comma.ai/ravenskys/staging-tici` (verify exact path if installer changed)
-- Device: pull `staging-tici` from `ravenskys/openpilot`; set `git remote` if you still have old URL
+Remote-start UI and daemon work are in place, but actual vehicle actuation is not.
 
-## On-device paths worth knowing
+- Device fingerprint found so far: `HYUNDAI_KONA_EV`
+- Safety config seen on device: `hyundai`, param `65`
+- Stock longitudinal is disabled
+- Likely telematics remote-start DBC candidate: `TMU_GW_E_01` (`0x53a`) with `CF_Gway_TeleReqEngineOperate`
+- Climate status candidate: `FATC11` (`0x383`)
+- Current Hyundai panda safety allowlist appears limited to known openpilot control frames such as `LKAS11` (`0x340`), `CLU11` (`0x4f1`), and `LFAHDA_MFC` (`0x485`)
 
-| Path | Purpose |
-|------|--------|
-| `/data/freeze_frames/` | User-tapped **FREEZE** text snapshots |
-| `/data/loggerd_watchdog/` | Auto health + error/freeze logs for loggerd/encoderd |
-| `/data/media/0/realdata/` | Route video / rlogs |
-| `/data/openpilot/` | Repo checkout |
+Bottom line: `TMU_GW_E_01` and HVAC actuation frames are expected to be blocked by normal `sendcan` until we either capture stock Bluelink traffic or add a narrowly reviewed offroad safety path.
 
-## Known issues / next steps (from prior sessions)
+## Next session
 
-- **webrtcd / bodyteleop:** audio `-9985 Device unavailable` may still need audio disabled in offer path for reliable streaming
-- **Params `Lan*Requested`:** still flags; vehicle-side actuation for remote start / charge is separate work
-- **Sentry / device voltage in UI:** partly placeholder telemetry
+1. Reconnect to the comma:
+   `ssh comma@192.168.86.227`
+2. Check whether the LAN UI is already listening:
+   `ss -ltnp | grep ':5000'`
+3. If not, start it from `/data/openpilot`:
+   `VIRTUAL_ENV=/usr/local/venv PYTHONPATH=/data/openpilot PATH=/usr/comma/shims:/usr/local/venv/bin:/usr/local/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin python3 -m tools.bodyteleop.lancontrol`
+4. Open `http://192.168.86.227:5000`, log in, and use the `Data Capture` tab.
+5. Collect initial captures:
+   `baseline`, `climate_on`, `climate_off`, `charge_start`, `charge_stop`
+6. Copy captures off-device:
+   `scp comma@192.168.86.227:/data/bluelink_captures/*.jsonl .`
+7. Rebuild or restart UI on the comma before validating:
+   - `FREEZE`
+   - wide-on-blinker camera switch
+   - 3/4-tap display gestures
 
-## Quick SSH (example)
+## Useful paths
 
-```powershell
-ssh comma@192.168.86.234
-```
+- `/data/openpilot/` - repo checkout
+- `/data/bluelink_captures/` - raw CAN capture windows
+- `/data/freeze_frames/` - user-triggered freeze snapshots
+- `/data/loggerd_watchdog/` - loggerd and encoderd health logs
+- `/data/media/0/realdata/` - route video and rlogs
 
-IP may change on LAN; use device’s current address.
+## Open issues
 
-## Resume points
+- `system/webrtc/webrtcd.py`: bodyteleop audio may still fail with `-9985 Device unavailable`; may need audio disabled in the offer path
+- Sentry and device-voltage UI values are still partly placeholder telemetry
+- Last known device state: updated bodyteleop files copied and compiled on-device, then SSH and port checks started timing out during banner exchange; likely device busy or in a power-state transition
 
-1. Rebuild / restart UI on comma after UI pulls so **FREEZE** and **wide-on-blinker** are active
-2. Copy diagnostics: `scp comma@<ip>:/data/freeze_frames/freeze_*.txt .` and `.../data/loggerd_watchdog/snapshot_*.log` as needed
-3. Continue webrtcd audio hardening if phone camera path still fails
+## Handy commands
 
-## Git notes
+- Capture command template:
+  `cd /data/openpilot && VIRTUAL_ENV=/usr/local/venv PYTHONPATH=/data/openpilot PATH=/usr/comma/shims:/usr/local/venv/bin:/usr/local/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin python3 -m tools.bodyteleop.capture_can_window --seconds 180 --label climate_on`
+- Remote-start debug dump:
+  `python3 -m tools.bodyteleop.remote_start_debug`
 
-- If commits should show a specific identity, set `user.name` / `user.email` on the machine you commit from; do not commit secrets.
+## Git note
+
+- If commit identity matters, set `user.name` and `user.email` on the machine you commit from.

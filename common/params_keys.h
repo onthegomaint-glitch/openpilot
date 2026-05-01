@@ -160,6 +160,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LanAuthConfig", {PERSISTENT, JSON}},
     {"LanRemoteStartConfig", {PERSISTENT, JSON}},
     {"LanRemoteStartRequested", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"LanRemoteStartStatus", {PERSISTENT, JSON}},
     {"LanSentryModeEnabled", {PERSISTENT, BOOL, "0"}},
     {"MaxTimeOffroad", {PERSISTENT | BACKUP, INT, "1800"}},
     {"ModelRunnerTypeCache", {CLEAR_ON_ONROAD_TRANSITION, INT}},

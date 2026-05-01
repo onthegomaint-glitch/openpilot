@@ -153,6 +153,8 @@ procs = [
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
   PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar),
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
+  PythonProcess("lancontrol", "tools.bodyteleop.lancontrol", only_offroad),
+  PythonProcess("remote_startd", "tools.bodyteleop.remote_startd", only_offroad),
   PythonProcess("joystick", "tools.joystick.joystick_control", and_(joystick, iscar)),
 
   # sunnylink <3

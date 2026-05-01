@@ -10,6 +10,7 @@ import os
 import secrets
 import ssl
 import subprocess
+import sys
 import time
 
 import pyaudio
@@ -44,6 +45,7 @@ COMMAND_PARAMS = {
 }
 SESSION_COOKIE = "lan_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24
+CAPTURE_DIR = "/data/bluelink_captures"
 
 
 @dataclasses.dataclass
@@ -228,12 +230,16 @@ def _read_vehicle_status(sm) -> dict:
 
   sentry_enabled = False
   remote_start_config = {}
+  remote_start_status = {}
   if Params is not None:
     cap = Params()
     sentry_enabled = bool(cap.get_bool("LanSentryModeEnabled"))
     cfg = cap.get("LanRemoteStartConfig", return_default=True)
     if isinstance(cfg, dict):
       remote_start_config = cfg
+    status = cap.get("LanRemoteStartStatus", return_default=True)
+    if isinstance(status, dict):
+      remote_start_status = status
 
   return {
     "batteryPercent": round(fuel_gauge * 100, 1),
@@ -247,6 +253,7 @@ def _read_vehicle_status(sm) -> dict:
     "deviceVoltage": round(device_voltage, 2),
     "sentryEnabled": sentry_enabled,
     "remoteStartConfig": remote_start_config,
+    "remoteStartStatus": remote_start_status,
   }
 
 
@@ -365,12 +372,100 @@ async def api_command(request: 'web.Request'):
         "frontDefrost": bool(ac_cfg.get("frontDefrost", False)),
       }
       params.put("LanRemoteStartConfig", safe_cfg)
+      params.put("LanRemoteStartStatus", {
+        "state": "requested",
+        "reason": "waiting for vehicle-side worker",
+        "updatedAt": int(time.time()),
+        "config": safe_cfg,
+      })
 
   command_param = COMMAND_PARAMS[command]
   params.put_bool(command_param, False)
   params.put_bool(command_param, True)
 
   return web.json_response({"ok": True, "requested": command})
+
+
+def _capture_status(app) -> dict:
+  proc = app.get("capture_proc")
+  meta = app.get("capture_meta", {})
+  running = bool(proc is not None and proc.poll() is None)
+  if proc is not None and not running:
+    log_handle = app.get("capture_log_handle")
+    if log_handle is not None:
+      log_handle.close()
+      app["capture_log_handle"] = None
+  status = {
+    "running": running,
+    **meta,
+  }
+  if proc is not None and not running:
+    status["returnCode"] = proc.returncode
+  return status
+
+
+async def api_capture_status(request: 'web.Request'):
+  _verify_access(request)
+  return web.json_response({"ok": True, "capture": _capture_status(request.app)})
+
+
+async def api_capture_start(request: 'web.Request'):
+  _verify_access(request)
+  proc = request.app.get("capture_proc")
+  if proc is not None and proc.poll() is None:
+    return web.json_response({"ok": False, "error": "Capture already running", "capture": _capture_status(request.app)}, status=409)
+
+  payload = await request.json()
+  label = str(payload.get("label", "capture")).strip() or "capture"
+  seconds = max(10, min(600, int(payload.get("seconds", 180))))
+  safe_label = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in label)
+  stamp = time.strftime("%Y%m%d-%H%M%S")
+  os.makedirs(CAPTURE_DIR, exist_ok=True)
+  out_file = os.path.join(CAPTURE_DIR, f"{stamp}_{safe_label}.jsonl")
+  log_file = os.path.join(CAPTURE_DIR, f"{stamp}_{safe_label}.out")
+
+  cmd = [
+    sys.executable,
+    "-m",
+    "tools.bodyteleop.capture_can_window",
+    "--seconds",
+    str(seconds),
+    "--label",
+    safe_label,
+    "--out-file",
+    out_file,
+  ]
+  log_handle = open(log_file, "w", encoding="utf-8")
+  proc = subprocess.Popen(cmd, cwd=BASEDIR, stdout=log_handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+  request.app["capture_proc"] = proc
+  request.app["capture_log_handle"] = log_handle
+  request.app["capture_meta"] = {
+    "label": safe_label,
+    "seconds": seconds,
+    "startedAt": int(time.time()),
+    "outFile": out_file,
+    "logFile": log_file,
+  }
+  return web.json_response({"ok": True, "capture": _capture_status(request.app)})
+
+
+async def api_capture_stop(request: 'web.Request'):
+  _verify_access(request)
+  proc = request.app.get("capture_proc")
+  if proc is None or proc.poll() is not None:
+    return web.json_response({"ok": True, "capture": _capture_status(request.app)})
+
+  proc.terminate()
+  try:
+    proc.wait(timeout=5)
+  except subprocess.TimeoutExpired:
+    proc.kill()
+    proc.wait(timeout=5)
+  log_handle = request.app.get("capture_log_handle")
+  if log_handle is not None:
+    log_handle.close()
+    request.app["capture_log_handle"] = None
+  return web.json_response({"ok": True, "capture": _capture_status(request.app)})
 
 
 async def offer(request: 'web.Request'):
@@ -387,9 +482,12 @@ async def offer(request: 'web.Request'):
     return web.json_response(answer)
 
 
-def main():
-  # Enable joystick debug mode
-  if Params is not None:
+def main(enable_joystick: bool | None = None):
+  if enable_joystick is None:
+    enable_joystick = os.getenv("BODYTELEOP_ENABLE_JOYSTICK", "1") == "1"
+
+  # Enable joystick debug mode only for the original body teleop process.
+  if enable_joystick and Params is not None:
     Params().put_bool("JoystickDebugMode", True)
 
   # App needs to be HTTPS for microphone and audio autoplay to work on the browser
@@ -399,6 +497,9 @@ def main():
   app["params"] = Params() if Params is not None else None
   app["status_sm"] = messaging.SubMaster(["carState"]) if messaging is not None else None
   app["sessions"] = {}
+  app["capture_proc"] = None
+  app["capture_log_handle"] = None
+  app["capture_meta"] = {}
   logger.info("Local control token: %s", _expected_token())
   app.router.add_get("/", index)
   app.router.add_get("/ping", ping, allow_head=True)
@@ -411,6 +512,9 @@ def main():
   app.router.add_get("/api/config", api_config)
   app.router.add_get("/api/status", api_status)
   app.router.add_post("/api/command/{name}", api_command)
+  app.router.add_get("/api/capture/status", api_capture_status)
+  app.router.add_post("/api/capture/start", api_capture_start)
+  app.router.add_post("/api/capture/stop", api_capture_stop)
   app.router.add_static('/static', os.path.join(TELEOPDIR, 'static'))
   web.run_app(app, access_log=None, host="0.0.0.0", port=5000, ssl_context=ssl_context)
 

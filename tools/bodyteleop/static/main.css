@@ -198,6 +198,12 @@ video {
   margin-bottom: 8px;
 }
 
+.form-select, .form-control {
+  background-color: #111 !important;
+  color: #fff !important;
+  border-color: #555 !important;
+}
+
 .command-result {
   font-size: 18px;
   text-align: center;

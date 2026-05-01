@@ -151,6 +151,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake = False
+    self._tap_times: list[float] = []
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
@@ -210,6 +211,8 @@ class Device:
     if ignition_just_turned_off or any(ev.left_down for ev in gui_app.mouse_events):
       self.reset_interactive_timeout()
 
+    self._handle_tap_gestures()
+
     interaction_timeout = time.monotonic() > self._interaction_time
     if interaction_timeout and not self._prev_timed_out:
       for callback in self._interactive_timeout_callbacks:
@@ -217,6 +220,31 @@ class Device:
     self._prev_timed_out = interaction_timeout
 
     self._set_awake(ui_state.ignition or not interaction_timeout)
+
+  def _handle_tap_gestures(self):
+    if ui_state.started:
+      self._tap_times.clear()
+      return
+
+    now = time.monotonic()
+    saw_tap = False
+    for ev in gui_app.mouse_events:
+      if ev.slot == 0 and ev.left_released:
+        self._tap_times.append(now)
+        saw_tap = True
+
+    self._tap_times = [t for t in self._tap_times if now - t <= 1.5]
+    if not saw_tap:
+      return
+
+    if len(self._tap_times) >= 4:
+      self._tap_times.clear()
+      self._interaction_time = now - 0.1
+      cloudlog.event("display tap gesture", action="sleep", taps=4)
+      self._set_awake(False)
+    elif len(self._tap_times) == 3:
+      self.reset_interactive_timeout()
+      cloudlog.event("display tap gesture", action="wake", taps=3)
 
   def _set_awake(self, on: bool):
     if on != self._awake:

@@ -82,20 +82,49 @@
       <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
         <div class="panel row controls-panel">
           <div class="col-12">
+            <div class="btn-group w-100" role="group">
+              <button id="tab-controls" class="btn btn-light active" type="button">Controls</button>
+              <button id="tab-capture" class="btn btn-outline-light" type="button">Data Capture</button>
+            </div>
+          </div>
+          <div class="col-12">
             <input id="local-token" type="password" placeholder="Local token" class="token-input" />
           </div>
-          <div class="col-sm-4 col-12"><button id="cmd-remote-start" class="btn btn-danger w-100">Request Remote Start</button></div>
-          <div class="col-12 remote-start-ac">
+          <div id="controls-tab" class="row g-2 w-100">
+            <div class="col-sm-4 col-12"><button id="cmd-remote-start" class="btn btn-danger w-100">Request Remote Start</button></div>
+            <div class="col-12 remote-start-ac">
             <div class="row g-2">
               <div class="col-sm-3 col-6"><label><input id="ac-enabled" type="checkbox" checked> A/C On</label></div>
               <div class="col-sm-3 col-6"><label><input id="ac-front-defrost" type="checkbox"> Front Defrost</label></div>
               <div class="col-sm-3 col-6"><label>Temp C <input id="ac-temp-c" type="number" min="16" max="30" value="21" class="form-control form-control-sm"></label></div>
               <div class="col-sm-3 col-6"><label>Fan 0-5 <input id="ac-fan-level" type="number" min="0" max="5" value="2" class="form-control form-control-sm"></label></div>
             </div>
+            </div>
+            <div class="col-sm-4 col-12"><button id="cmd-charge-start" class="btn btn-success w-100">Start Charging</button></div>
+            <div class="col-sm-4 col-12"><button id="cmd-charge-stop" class="btn btn-warning w-100">Stop Charging</button></div>
+            <div class="col-sm-4 col-12"><button id="cmd-sentry-toggle" class="btn btn-primary w-100">Toggle Sentry Mode</button></div>
           </div>
-          <div class="col-sm-4 col-12"><button id="cmd-charge-start" class="btn btn-success w-100">Start Charging</button></div>
-          <div class="col-sm-4 col-12"><button id="cmd-charge-stop" class="btn btn-warning w-100">Stop Charging</button></div>
-          <div class="col-sm-4 col-12"><button id="cmd-sentry-toggle" class="btn btn-primary w-100">Toggle Sentry Mode</button></div>
+          <div id="capture-tab" class="row g-2 w-100 d-none">
+            <div class="col-sm-6 col-12">
+              <select id="capture-label" class="form-select">
+                <option value="baseline">baseline</option>
+                <option value="climate_on">climate_on</option>
+                <option value="climate_off">climate_off</option>
+                <option value="temp_low">temp_low</option>
+                <option value="temp_high">temp_high</option>
+                <option value="defrost_on">defrost_on</option>
+                <option value="defrost_off">defrost_off</option>
+                <option value="charge_start">charge_start</option>
+                <option value="charge_stop">charge_stop</option>
+                <option value="lock">lock</option>
+                <option value="unlock">unlock</option>
+              </select>
+            </div>
+            <div class="col-sm-3 col-6"><input id="capture-seconds" class="form-control" type="number" min="10" max="600" value="180"></div>
+            <div class="col-sm-3 col-6"><button id="capture-start" class="btn btn-success w-100">Start Capture</button></div>
+            <div class="col-sm-3 col-12"><button id="capture-stop" class="btn btn-warning w-100">Stop Capture</button></div>
+            <div id="capture-result" class="col-12 command-result">Capture idle</div>
+          </div>
           <div id="sentry-result" class="col-12 command-result">Sentry mode: unknown</div>
           <div id="command-result" class="col-12 command-result">-</div>
         </div>

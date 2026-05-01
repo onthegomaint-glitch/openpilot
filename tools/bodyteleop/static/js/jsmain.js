@@ -32,7 +32,9 @@ async function refreshVehicleStatus() {
 
     const charging = payload.status.charging ? "charging" : "not charging";
     const sentry = payload.status.sentryEnabled ? "enabled" : "disabled";
-    $("#command-result").text(`Battery ${payload.status.batteryPercent}% - ${charging}`);
+    const remote = payload.status.remoteStartStatus || {};
+    const remoteText = remote.state ? ` - remote start ${remote.state}: ${remote.reason || "updated"}` : "";
+    $("#command-result").text(`Battery ${payload.status.batteryPercent}% - ${charging}${remoteText}`);
     $("#device-voltage").text(`${payload.status.deviceVoltage ?? 0}V`);
     $("#sentry-result").text(`Sentry mode: ${sentry}`);
   } catch (e) {
@@ -73,6 +75,85 @@ async function sendCommand(name) {
     refreshVehicleStatus();
   } catch (e) {
     $("#command-result").text("Command request failed");
+  }
+}
+
+function setActiveTab(name) {
+  const capture = name === "capture";
+  $("#controls-tab").toggleClass("d-none", capture);
+  $("#capture-tab").toggleClass("d-none", !capture);
+  $("#tab-controls").toggleClass("btn-light active", !capture).toggleClass("btn-outline-light", capture);
+  $("#tab-capture").toggleClass("btn-light active", capture).toggleClass("btn-outline-light", !capture);
+}
+
+async function refreshCaptureStatus() {
+  if (!isAuthenticated) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/capture/status", { headers: apiHeaders() });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    const capture = payload.capture || {};
+    if (capture.running) {
+      $("#capture-result").text(`Capturing ${capture.label} -> ${capture.outFile}`);
+    } else if (capture.outFile) {
+      $("#capture-result").text(`Capture stopped -> ${capture.outFile}`);
+    } else {
+      $("#capture-result").text("Capture idle");
+    }
+  } catch (_e) {
+    $("#capture-result").text("Capture status unavailable");
+  }
+}
+
+async function startCapture() {
+  if (!isAuthenticated) {
+    $("#capture-result").text("Please login first");
+    return;
+  }
+  const body = {
+    label: $("#capture-label").val() || "capture",
+    seconds: Number($("#capture-seconds").val() || 180),
+  };
+  try {
+    const response = await fetch("/api/capture/start", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      $("#capture-result").text(payload.error || `Capture failed (${response.status})`);
+      return;
+    }
+    refreshCaptureStatus();
+  } catch (_e) {
+    $("#capture-result").text("Capture request failed");
+  }
+}
+
+async function stopCapture() {
+  if (!isAuthenticated) {
+    $("#capture-result").text("Please login first");
+    return;
+  }
+  try {
+    const response = await fetch("/api/capture/stop", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      $("#capture-result").text(payload.error || `Stop failed (${response.status})`);
+      return;
+    }
+    refreshCaptureStatus();
+  } catch (_e) {
+    $("#capture-result").text("Stop request failed");
   }
 }
 
@@ -133,11 +214,17 @@ $("#cmd-remote-start").on("click", () => sendCommand("remote_start"));
 $("#cmd-charge-start").on("click", () => sendCommand("charge_start"));
 $("#cmd-charge-stop").on("click", () => sendCommand("charge_stop"));
 $("#cmd-sentry-toggle").on("click", () => sendCommand("sentry_toggle"));
+$("#tab-controls").on("click", () => setActiveTab("controls"));
+$("#tab-capture").on("click", () => setActiveTab("capture"));
+$("#capture-start").on("click", startCapture);
+$("#capture-stop").on("click", stopCapture);
 $("#auth-login").on("click", () => doAuth("/api/auth/login"));
 $("#auth-setup").on("click", () => doAuth("/api/auth/setup"));
 setInterval(refreshVehicleStatus, statusPollMs);
 setInterval(refreshAuthStatus, statusPollMs);
+setInterval(refreshCaptureStatus, statusPollMs);
 refreshAuthStatus();
 refreshVehicleStatus();
+refreshCaptureStatus();
 
 start(pc, dc);
