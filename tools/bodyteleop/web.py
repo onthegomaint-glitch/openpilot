@@ -49,6 +49,11 @@ except ModuleNotFoundError:
     write_remote_start_status,
   )
 
+try:
+  from openpilot.tools.bodyteleop.auth_config import read_auth_config, write_auth_config
+except ModuleNotFoundError:
+  from tools.bodyteleop.auth_config import read_auth_config, write_auth_config
+
 logger = logging.getLogger("bodyteleop")
 logging.basicConfig(level=logging.INFO)
 
@@ -102,13 +107,6 @@ def _verify_local_auth(request: 'web.Request'):
     raise web.HTTPForbidden(text="Local network access only")
   if not _is_authorized(request):
     raise web.HTTPUnauthorized(text="Invalid token")
-
-
-def _read_auth_config(params: Params | None) -> dict:
-  if params is None:
-    return {}
-  cfg = params.get("LanAuthConfig", return_default=True)
-  return cfg if isinstance(cfg, dict) else {}
 
 
 def _hash_password(password: str, salt: str) -> str:
@@ -314,7 +312,7 @@ async def api_auth_setup(request: 'web.Request'):
     return web.json_response({"ok": False, "error": "Username/password too short"}, status=400)
 
   salt = secrets.token_hex(16)
-  params.put("LanAuthConfig", {
+  write_auth_config(params, {
     "username": username,
     "salt": salt,
     "passwordHash": _hash_password(password, salt),
