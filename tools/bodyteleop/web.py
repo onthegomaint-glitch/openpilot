@@ -33,9 +33,21 @@ except Exception:
   messaging = None
 
 try:
-  from openpilot.tools.bodyteleop.remote_start_status import read_remote_start_status, write_remote_start_status
+  from openpilot.tools.bodyteleop.remote_start_status import (
+    read_remote_start_config,
+    read_remote_start_status,
+    trigger_remote_start_request,
+    write_remote_start_config,
+    write_remote_start_status,
+  )
 except ModuleNotFoundError:
-  from tools.bodyteleop.remote_start_status import read_remote_start_status, write_remote_start_status
+  from tools.bodyteleop.remote_start_status import (
+    read_remote_start_config,
+    read_remote_start_status,
+    trigger_remote_start_request,
+    write_remote_start_config,
+    write_remote_start_status,
+  )
 
 logger = logging.getLogger("bodyteleop")
 logging.basicConfig(level=logging.INFO)
@@ -239,9 +251,7 @@ def _read_vehicle_status(sm) -> dict:
   if Params is not None:
     cap = Params()
     sentry_enabled = bool(cap.get_bool("LanSentryModeEnabled"))
-    cfg = cap.get("LanRemoteStartConfig", return_default=True)
-    if isinstance(cfg, dict):
-      remote_start_config = cfg
+    remote_start_config = read_remote_start_config(cap)
     remote_start_status = read_remote_start_status(cap)
 
   return {
@@ -374,13 +384,15 @@ async def api_command(request: 'web.Request'):
         "fanLevel": int(ac_cfg.get("fanLevel", 2)),
         "frontDefrost": bool(ac_cfg.get("frontDefrost", False)),
       }
-      params.put("LanRemoteStartConfig", safe_cfg)
+      write_remote_start_config(params, safe_cfg)
       write_remote_start_status(params, {
         "state": "requested",
         "reason": "waiting for vehicle-side worker",
         "updatedAt": int(time.time()),
         "config": safe_cfg,
       })
+      trigger_remote_start_request(params)
+      return web.json_response({"ok": True, "requested": command})
 
   command_param = COMMAND_PARAMS[command]
   params.put_bool(command_param, False)

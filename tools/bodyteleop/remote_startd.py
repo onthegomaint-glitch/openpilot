@@ -8,7 +8,11 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.tools.bodyteleop.remote_start_adapters import RemoteStartRequest, adapter_for_car
-from openpilot.tools.bodyteleop.remote_start_status import write_remote_start_status
+from openpilot.tools.bodyteleop.remote_start_status import (
+  consume_remote_start_request,
+  read_remote_start_config,
+  write_remote_start_status,
+)
 
 
 REQUEST_PARAM = "LanRemoteStartRequested"
@@ -41,9 +45,7 @@ def _read_car_params(params: Params) -> car.CarParams:
 
 
 def _read_config(params: Params) -> RemoteStartRequest:
-  cfg = params.get(CONFIG_PARAM, return_default=True)
-  if not isinstance(cfg, dict):
-    cfg = {}
+  cfg = read_remote_start_config(params)
   return RemoteStartRequest(
     enabled=bool(cfg.get("enabled", True)),
     temperature_c=max(16.0, min(30.0, float(cfg.get("temperatureC", 21.0)))),
@@ -107,8 +109,7 @@ def main() -> None:
 
   _put_status(params, "idle", "waiting for LAN remote start request")
   while True:
-    if params.get_bool(REQUEST_PARAM):
-      params.put_bool(REQUEST_PARAM, False)
+    if consume_remote_start_request(params):
       last_attempt = _handle_request(params, sm, last_attempt)
     rk.keep_time()
 
