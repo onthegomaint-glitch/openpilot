@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from cereal import car, messaging
 from openpilot.common.params import Params
+from openpilot.tools.bodyteleop.remote_start_status import read_remote_start_status
 
 
 def _print_car_params(params: Params) -> None:
@@ -31,7 +32,7 @@ def main() -> None:
   _print_car_params(params)
   print(f"LanRemoteStartRequested: {params.get_bool('LanRemoteStartRequested')}")
   _print_json_param(params, "LanRemoteStartConfig")
-  _print_json_param(params, "LanRemoteStartStatus")
+  print(f"LanRemoteStartStatus: {read_remote_start_status(params) or 'missing'}")
 
 
 if __name__ == "__main__":

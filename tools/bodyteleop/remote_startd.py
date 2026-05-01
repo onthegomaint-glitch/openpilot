@@ -8,6 +8,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.tools.bodyteleop.remote_start_adapters import RemoteStartRequest, adapter_for_car
+from openpilot.tools.bodyteleop.remote_start_status import write_remote_start_status
 
 
 REQUEST_PARAM = "LanRemoteStartRequested"
@@ -27,7 +28,7 @@ def _put_status(params: Params, state: str, reason: str, **extra: Any) -> None:
     "updatedAt": _now(),
     **extra,
   }
-  params.put(STATUS_PARAM, status)
+  write_remote_start_status(params, status)
   cloudlog.event("lan_remote_start_status", **status)
 
 

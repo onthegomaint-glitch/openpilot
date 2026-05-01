@@ -32,6 +32,11 @@ try:
 except Exception:
   messaging = None
 
+try:
+  from openpilot.tools.bodyteleop.remote_start_status import read_remote_start_status, write_remote_start_status
+except ModuleNotFoundError:
+  from tools.bodyteleop.remote_start_status import read_remote_start_status, write_remote_start_status
+
 logger = logging.getLogger("bodyteleop")
 logging.basicConfig(level=logging.INFO)
 
@@ -237,9 +242,7 @@ def _read_vehicle_status(sm) -> dict:
     cfg = cap.get("LanRemoteStartConfig", return_default=True)
     if isinstance(cfg, dict):
       remote_start_config = cfg
-    status = cap.get("LanRemoteStartStatus", return_default=True)
-    if isinstance(status, dict):
-      remote_start_status = status
+    remote_start_status = read_remote_start_status(cap)
 
   return {
     "batteryPercent": round(fuel_gauge * 100, 1),
@@ -372,7 +375,7 @@ async def api_command(request: 'web.Request'):
         "frontDefrost": bool(ac_cfg.get("frontDefrost", False)),
       }
       params.put("LanRemoteStartConfig", safe_cfg)
-      params.put("LanRemoteStartStatus", {
+      write_remote_start_status(params, {
         "state": "requested",
         "reason": "waiting for vehicle-side worker",
         "updatedAt": int(time.time()),
