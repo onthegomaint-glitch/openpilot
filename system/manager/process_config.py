@@ -151,7 +151,7 @@ procs = [
 
   # debug procs
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
-  PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar),
+  PythonProcess("webrtcd", "system.webrtc.webrtcd", only_offroad, enabled=not PC),
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
   PythonProcess("lancontrol", "tools.bodyteleop.lancontrol", only_offroad),
   PythonProcess("remote_startd", "tools.bodyteleop.remote_startd", only_offroad),

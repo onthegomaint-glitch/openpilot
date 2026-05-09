@@ -73,6 +73,7 @@ VIDEO_LIBRARY_DIR = "/data/media/0/realdata"
 VIDEO_LIBRARY_META_PATH = "/data/media/0/video_library_meta.json"
 VIDEO_ROUTE_RE = re.compile(r"^[A-Za-z0-9]{16}\|\d{4}-\d{2}-\d{2}--\d{2}-\d{2}-\d{2}$")
 VIDEO_SEGMENT_RE = re.compile(r"^(?P<route>[A-Za-z0-9]{16}\|\d{4}-\d{2}-\d{2}--\d{2}-\d{2}-\d{2})--(?P<segment>\d+)$")
+LEGACY_VIDEO_SEGMENT_RE = re.compile(r"^(?P<route>[0-9a-f]{8}--[0-9a-f]{10})--(?P<segment>\d+)$", re.IGNORECASE)
 VIDEO_FILE_MAP = {
   "qcamera": ("qcamera.ts", "Q camera"),
   "road": ("fcamera.hevc", "Road"),
@@ -462,7 +463,7 @@ def _video_meta_key(route_name: str, segment_num: int, camera_key: str) -> str:
 
 
 def _resolve_video_entry(route_name: str, segment_num: int, camera_key: str) -> tuple[str, str] | tuple[None, None]:
-  if not VIDEO_ROUTE_RE.fullmatch(route_name):
+  if not (VIDEO_ROUTE_RE.fullmatch(route_name) or LEGACY_VIDEO_SEGMENT_RE.fullmatch(f"{route_name}--{segment_num}")):
     return None, None
   if camera_key not in VIDEO_FILE_MAP:
     return None, None
@@ -553,7 +554,14 @@ def _scan_video_library(query: str = "", limit: int = 60) -> list[dict]:
         segment_info = _build_segment_video_info(route_name, int(match.group("segment")), entry.path, meta)
         if segment_info is not None:
           segment_matches.append(segment_info)
-      elif VIDEO_ROUTE_RE.fullmatch(entry.name):
+      else:
+        legacy_match = LEGACY_VIDEO_SEGMENT_RE.fullmatch(entry.name)
+        if legacy_match:
+          route_name = legacy_match.group("route")
+          segment_info = _build_segment_video_info(route_name, int(legacy_match.group("segment")), entry.path, meta)
+          if segment_info is not None:
+            segment_matches.append(segment_info)
+      if not segment_matches and VIDEO_ROUTE_RE.fullmatch(entry.name):
         route_name = entry.name
         try:
           with os.scandir(entry.path) as segment_entries:
