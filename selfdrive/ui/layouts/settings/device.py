@@ -6,6 +6,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.ui.onroad.driver_camera_dialog import DriverCameraDialog
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.widgets.pairing_dialog import PairingDialog
+from openpilot.selfdrive.ui.widgets.video_library_dialog import VideoLibraryDialog
 from openpilot.system.hardware import TICI
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import Widget, DialogResult
@@ -24,6 +25,7 @@ DESCRIPTIONS = {
       "up or 9° down. openpilot is continuously calibrating, resetting is rarely required."
   ),
   'review_guide': "Review the rules, features, and limitations of openpilot",
+  'video_library': "Search and watch videos stored on the device while offroad.",
 }
 
 
@@ -36,6 +38,7 @@ class DeviceLayout(Widget):
     self._driver_camera: DriverCameraDialog | None = None
     self._pair_device_dialog: PairingDialog | None = None
     self._fcc_dialog: HtmlRenderer | None = None
+    self._video_library_dialog: VideoLibraryDialog | None = None
 
     items = self._initialize_items()
     self._scroller = Scroller(items, line_separator=True, spacing=0)
@@ -49,6 +52,7 @@ class DeviceLayout(Widget):
       text_item("Serial", serial),
       button_item("Pair Device", "PAIR", DESCRIPTIONS['pair_device'], callback=self._pair_device),
       button_item("Driver Camera", "PREVIEW", DESCRIPTIONS['driver_camera'], callback=self._show_driver_camera, enabled=ui_state.is_offroad),
+      button_item("Video Library", "OPEN", DESCRIPTIONS['video_library'], callback=self._show_video_library, enabled=ui_state.is_offroad),
       button_item("Reset Calibration", "RESET", DESCRIPTIONS['reset_calibration'], callback=self._reset_calibration_prompt),
       regulatory_btn := button_item("Regulatory", "VIEW", callback=self._on_regulatory),
       button_item("Review Training Guide", "REVIEW", DESCRIPTIONS['review_guide'], self._on_review_training_guide),
@@ -84,6 +88,17 @@ class DeviceLayout(Widget):
       self._driver_camera = DriverCameraDialog()
 
     gui_app.set_modal_overlay(self._driver_camera, callback=lambda result: setattr(self, '_driver_camera', None))
+
+  def _show_video_library(self):
+    if not self._video_library_dialog:
+      self._video_library_dialog = VideoLibraryDialog()
+
+    gui_app.set_modal_overlay(self._video_library_dialog, callback=self._close_video_library)
+
+  def _close_video_library(self, result: int):
+    if self._video_library_dialog is not None:
+      self._video_library_dialog.close()
+    self._video_library_dialog = None
 
   def _reset_calibration_prompt(self):
     if ui_state.engaged:
