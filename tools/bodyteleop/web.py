@@ -12,7 +12,10 @@ import subprocess
 import sys
 import time
 
-import pyaudio
+try:
+  import pyaudio
+except ModuleNotFoundError:
+  pyaudio = None
 import wave
 from aiohttp import web
 from aiohttp import ClientSession
@@ -100,6 +103,10 @@ def _verify_access(request: 'web.Request'):
 
 ## UTILS
 async def play_sound(sound: str):
+  if pyaudio is None:
+    logger.warning("Skipping sound playback because pyaudio is unavailable")
+    return
+
   SOUNDS = {
     "engage": "selfdrive/assets/sounds/engage.wav",
     "disengage": "selfdrive/assets/sounds/disengage.wav",
