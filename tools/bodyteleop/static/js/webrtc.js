@@ -51,7 +51,7 @@ export function createPeerConnection(pc) {
 
 
 export function negotiate(pc) {
-  return pc.createOffer({offerToReceiveAudio:true, offerToReceiveVideo:true}).then(function(offer) {
+  return pc.createOffer({offerToReceiveAudio:false, offerToReceiveVideo:true}).then(function(offer) {
     return pc.setLocalDescription(offer);
   }).then(function() {
     return new Promise(function(resolve) {
@@ -100,14 +100,7 @@ function isMobile() {
 
 
 export const constraints = {
-  audio: {
-    autoGainControl: false,
-    sampleRate: 48000,
-    sampleSize: 16,
-    echoCancellation: true,
-    noiseSuppression: true,
-    channelCount: 1
-  },
+  audio: false,
   video: isMobile()
 };
 
@@ -115,30 +108,8 @@ export const constraints = {
 export function start(pc, dc) {
   pc = createPeerConnection(pc);
 
-  // add audio track
-  navigator.mediaDevices.enumerateDevices()
-    .then(function(devices) {
-      const hasAudioInput = devices.find((device) => device.kind === "audioinput");
-      var modifiedConstraints = {};
-      modifiedConstraints.video = constraints.video;
-      modifiedConstraints.audio = hasAudioInput ? constraints.audio : false;
-
-      return Promise.resolve(modifiedConstraints);
-    })
-    .then(function(constraints) {
-      if (constraints.audio || constraints.video) {
-        return navigator.mediaDevices.getUserMedia(constraints);
-      } else{
-        return Promise.resolve(null);
-      }
-    })
-    .then(function(stream) {
-      if (stream) {
-        stream.getTracks().forEach(function(track) {
-          pc.addTrack(track, stream);
-        });
-      }
-
+  Promise.resolve()
+    .then(function() {
       return negotiate(pc);
     })
     .catch(function(err) {

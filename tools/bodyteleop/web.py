@@ -749,7 +749,7 @@ async def api_capture_stop(request: 'web.Request'):
 async def offer(request: 'web.Request'):
   _verify_access(request)
   params = await request.json()
-  body = StreamRequestBody(params["sdp"], ["driver"], ["testJoystick"], ["carState"])
+  body = StreamRequestBody(params["sdp"], ["road"], ["testJoystick"], ["carState"])
   body_json = json.dumps(dataclasses.asdict(body))
 
   logger.info("Sending offer to webrtcd...")
