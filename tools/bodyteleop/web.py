@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import ipaddress
+import io
 import json
 import logging
 import os
@@ -74,6 +75,12 @@ VIDEO_FILE_MAP = {
   "wide": ("ecamera.hevc", "Wide"),
   "driver": ("dcamera.hevc", "Driver"),
 }
+SNAPSHOT_CAMERA_MAP = {
+  "road": "roadCameraState",
+  "wide": "wideRoadCameraState",
+  "driver": "driverCameraState",
+}
+SNAPSHOT_CACHE_TTL = 20
 
 
 @dataclasses.dataclass
@@ -517,6 +524,58 @@ def _resolve_video_path(route_name: str, segment_num: int, camera_key: str) -> s
   return video_path
 
 
+def _capture_camera_snapshot(camera_key: str) -> bytes:
+  if camera_key not in SNAPSHOT_CAMERA_MAP:
+    raise web.HTTPBadRequest(text="Unsupported snapshot camera")
+
+  try:
+    from PIL import Image
+    from openpilot.common.params import Params as SnapshotParams
+    from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
+    from openpilot.system.camerad.snapshot import get_snapshots
+    from openpilot.system.hardware import PC
+    from openpilot.system.manager.process_config import managed_processes
+  except ModuleNotFoundError:
+    from common.params import Params as SnapshotParams
+    from selfdrive.selfdrived.alertmanager import set_offroad_alert
+    from system.camerad.snapshot import get_snapshots
+    from system.hardware import PC
+    from system.manager.process_config import managed_processes
+
+  params = SnapshotParams()
+  if not params.get_bool("IsOffroad"):
+    raise web.HTTPConflict(text="Camera snapshots are only available while offroad")
+  if params.get_bool("IsTakingSnapshot"):
+    raise web.HTTPConflict(text="A camera snapshot is already in progress")
+
+  params.put_bool("IsTakingSnapshot", True)
+  set_offroad_alert("Offroad_IsTakingSnapshot", True)
+  time.sleep(2.0)
+
+  try:
+    try:
+      subprocess.check_call(["pgrep", "camerad"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      raise web.HTTPConflict(text="camerad is already running")
+    except subprocess.CalledProcessError:
+      pass
+
+    if not PC:
+      managed_processes["camerad"].start()
+
+    image, _unused = get_snapshots(SNAPSHOT_CAMERA_MAP[camera_key], None)
+  finally:
+    managed_processes["camerad"].stop()
+    params.put_bool("IsTakingSnapshot", False)
+    set_offroad_alert("Offroad_IsTakingSnapshot", False)
+
+  if image is None:
+    raise web.HTTPInternalServerError(text="Snapshot capture returned no image")
+
+  buffer = io.BytesIO()
+  Image.fromarray(image).save(buffer, format="JPEG", quality=85)
+  return buffer.getvalue()
+
+
 async def api_capture_status(request: 'web.Request'):
   _verify_access(request)
   return web.json_response({"ok": True, "capture": _capture_status(request.app)})
@@ -618,6 +677,28 @@ async def api_videos_stream(request: 'web.Request'):
       pass
 
   return response
+
+
+async def api_camera_snapshot(request: 'web.Request'):
+  _verify_access(request)
+  camera_key = str(request.query.get("camera", "wide")).strip()
+  cache = request.app.setdefault("snapshot_cache", {})
+  cached = cache.get(camera_key)
+  now = time.time()
+  if cached is not None and now - cached["captured_at"] < SNAPSHOT_CACHE_TTL:
+    return web.Response(
+      body=cached["data"],
+      content_type="image/jpeg",
+      headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+  image_bytes = await asyncio.to_thread(_capture_camera_snapshot, camera_key)
+  cache[camera_key] = {"captured_at": now, "data": image_bytes}
+  return web.Response(
+    body=image_bytes,
+    content_type="image/jpeg",
+    headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+  )
 
 
 async def api_videos_protect(request: 'web.Request'):
@@ -780,6 +861,7 @@ def main(enable_joystick: bool | None = None):
   app["capture_proc"] = None
   app["capture_log_handle"] = None
   app["capture_meta"] = {}
+  app["snapshot_cache"] = {}
   logger.info("LAN control auth disabled for local network use")
   app.router.add_get("/", index)
   app.router.add_get("/ping", ping, allow_head=True)
@@ -797,6 +879,7 @@ def main(enable_joystick: bool | None = None):
   app.router.add_post("/api/capture/stop", api_capture_stop)
   app.router.add_get("/api/videos", api_videos_list)
   app.router.add_get("/api/videos/stream", api_videos_stream)
+  app.router.add_get("/api/camera/snapshot", api_camera_snapshot)
   app.router.add_post("/api/videos/protect", api_videos_protect)
   app.router.add_post("/api/videos/delete", api_videos_delete)
   app.router.add_static('/static', os.path.join(TELEOPDIR, 'static'))

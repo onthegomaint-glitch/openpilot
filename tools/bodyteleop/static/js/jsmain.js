@@ -5,11 +5,105 @@ export var dc = null;
 const statusPollMs = 3000;
 let isAuthenticated = true;
 let videoSearchTimer = null;
+let liveVideoTimeout = null;
+let liveVideoVisible = false;
 
 function apiHeaders() {
   return {
     "Content-Type": "application/json",
   };
+}
+
+function snapshotUrl(cameraKey) {
+  const params = new URLSearchParams({
+    camera: cameraKey,
+    t: String(Date.now()),
+  });
+  return `/api/camera/snapshot?${params.toString()}`;
+}
+
+function showLiveVideo() {
+  liveVideoVisible = true;
+  $("#video").removeClass("d-none");
+  $("#camera-fallback").addClass("d-none");
+  $("#camera-status").text("Live video connected");
+}
+
+function showSnapshotFallback(message) {
+  liveVideoVisible = false;
+  $("#video").addClass("d-none");
+  $("#camera-fallback").removeClass("d-none");
+  if (message) {
+    $("#camera-status").text(message);
+  }
+}
+
+async function refreshCameraSnapshot(message) {
+  const cameraKey = $("#snapshot-camera").val() || "wide";
+  const img = $("#camera-snapshot")[0];
+  if (!img) {
+    return;
+  }
+
+  showSnapshotFallback(message || "Loading snapshot...");
+  $("#camera-status").text(`Loading ${cameraKey} snapshot...`);
+
+  await new Promise((resolve) => {
+    const clearHandlers = () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+    img.onload = () => {
+      clearHandlers();
+      $("#camera-status").text(`${cameraKey} snapshot updated`);
+      resolve();
+    };
+    img.onerror = () => {
+      clearHandlers();
+      $("#camera-status").text(`${cameraKey} snapshot unavailable`);
+      resolve();
+    };
+    img.src = snapshotUrl(cameraKey);
+  });
+}
+
+function scheduleSnapshotFallback(message) {
+  if (liveVideoTimeout !== null) {
+    clearTimeout(liveVideoTimeout);
+  }
+  liveVideoTimeout = window.setTimeout(() => {
+    const video = $("#video")[0];
+    if (!video || liveVideoVisible || video.readyState >= 2) {
+      return;
+    }
+    refreshCameraSnapshot(message || "Live video unavailable offroad. Showing snapshot fallback.");
+  }, 5000);
+}
+
+function setupCameraFallback() {
+  const video = $("#video")[0];
+  if (!video) {
+    return;
+  }
+
+  video.addEventListener("loadeddata", () => {
+    showLiveVideo();
+  });
+  video.addEventListener("playing", () => {
+    showLiveVideo();
+  });
+  video.addEventListener("stalled", () => {
+    refreshCameraSnapshot("Live video stalled. Showing snapshot fallback.");
+  });
+  video.addEventListener("emptied", () => {
+    scheduleSnapshotFallback("Live video unavailable offroad. Showing snapshot fallback.");
+  });
+  video.addEventListener("error", () => {
+    refreshCameraSnapshot("Live video failed. Showing snapshot fallback.");
+  });
+  $("#snapshot-refresh").on("click", () => refreshCameraSnapshot());
+  $("#snapshot-camera").on("change", () => refreshCameraSnapshot());
+  scheduleSnapshotFallback("Live video unavailable offroad. Showing snapshot fallback.");
 }
 
 async function refreshVehicleStatus() {
@@ -377,6 +471,7 @@ setInterval( () => {
     $("#battery").text("-");
     $("#ping-time").text('-');
     $("video")[0].load();
+    scheduleSnapshotFallback("Live video unavailable offroad. Showing snapshot fallback.");
   }
 }, 5000);
 
@@ -402,5 +497,6 @@ setInterval(refreshCaptureStatus, statusPollMs);
 refreshAuthStatus();
 refreshVehicleStatus();
 refreshCaptureStatus();
+setupCameraFallback();
 
 start(pc, dc);

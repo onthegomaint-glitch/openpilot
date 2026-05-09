@@ -17,6 +17,18 @@
       <p class="jumbo">comma body</p>
       <audio id="audio" autoplay="true"></audio>
       <video id="video" playsinline autoplay muted loop poster="/static/poster.png"></video>
+      <div id="camera-fallback" class="camera-fallback d-none">
+        <div class="camera-fallback-toolbar">
+          <select id="snapshot-camera" class="form-select form-select-sm">
+            <option value="wide" selected>Wide snapshot</option>
+            <option value="road">Road snapshot</option>
+            <option value="driver">Driver snapshot</option>
+          </select>
+          <button id="snapshot-refresh" class="btn btn-outline-light btn-sm" type="button">Refresh Snapshot</button>
+        </div>
+        <img id="camera-snapshot" class="camera-snapshot" alt="Camera snapshot">
+        <div id="camera-status" class="command-result">Live video unavailable. Snapshot fallback is ready.</div>
+      </div>
       <div id="icon-panel" class="row">
         <div class="col-sm-12 col-md-6 details">
           <div class="icon-sup-panel col-12">
