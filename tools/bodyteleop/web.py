@@ -7,6 +7,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import ssl
 import subprocess
@@ -68,6 +69,16 @@ COMMAND_PARAMS = {
 SESSION_COOKIE = "lan_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24
 CAPTURE_DIR = "/data/bluelink_captures"
+VIDEO_LIBRARY_DIR = "/data/media/0/realdata"
+VIDEO_LIBRARY_META_PATH = "/data/media/0/video_library_meta.json"
+VIDEO_ROUTE_RE = re.compile(r"^[A-Za-z0-9]{16}\|\d{4}-\d{2}-\d{2}--\d{2}-\d{2}-\d{2}$")
+VIDEO_SEGMENT_RE = re.compile(r"^(?P<route>[A-Za-z0-9]{16}\|\d{4}-\d{2}-\d{2}--\d{2}-\d{2}-\d{2})--(?P<segment>\d+)$")
+VIDEO_FILE_MAP = {
+  "qcamera": ("qcamera.ts", "Q camera"),
+  "road": ("fcamera.hevc", "Road"),
+  "wide": ("ecamera.hevc", "Wide"),
+  "driver": ("dcamera.hevc", "Driver"),
+}
 
 
 @dataclasses.dataclass
@@ -417,9 +428,349 @@ def _capture_status(app) -> dict:
   return status
 
 
+def _is_safe_video_root(path: str) -> bool:
+  try:
+    return os.path.commonpath([os.path.realpath(path), os.path.realpath(VIDEO_LIBRARY_DIR)]) == os.path.realpath(VIDEO_LIBRARY_DIR)
+  except ValueError:
+    return False
+
+
+def _load_video_library_meta() -> dict:
+  try:
+    with open(VIDEO_LIBRARY_META_PATH, encoding="utf-8") as f:
+      data = json.load(f)
+      if isinstance(data, dict):
+        return data
+  except FileNotFoundError:
+    return {}
+  except (OSError, json.JSONDecodeError):
+    logger.warning("Failed to read video library metadata from %s", VIDEO_LIBRARY_META_PATH)
+  return {}
+
+
+def _save_video_library_meta(meta: dict) -> None:
+  parent_dir = os.path.dirname(VIDEO_LIBRARY_META_PATH)
+  os.makedirs(parent_dir, exist_ok=True)
+  temp_path = f"{VIDEO_LIBRARY_META_PATH}.tmp"
+  with open(temp_path, "w", encoding="utf-8") as f:
+    json.dump(meta, f, indent=2, sort_keys=True)
+  os.replace(temp_path, VIDEO_LIBRARY_META_PATH)
+
+
+def _video_meta_key(route_name: str, segment_num: int, camera_key: str) -> str:
+  return f"{route_name}--{segment_num}/{camera_key}"
+
+
+def _resolve_video_entry(route_name: str, segment_num: int, camera_key: str) -> tuple[str, str] | tuple[None, None]:
+  if not VIDEO_ROUTE_RE.fullmatch(route_name):
+    return None, None
+  if camera_key not in VIDEO_FILE_MAP:
+    return None, None
+
+  filename = VIDEO_FILE_MAP[camera_key][0]
+  candidate_paths = [
+    os.path.join(VIDEO_LIBRARY_DIR, f"{route_name}--{segment_num}", filename),
+    os.path.join(VIDEO_LIBRARY_DIR, route_name, str(segment_num), filename),
+  ]
+
+  for candidate in candidate_paths:
+    if os.path.isfile(candidate) and _is_safe_video_root(candidate):
+      return candidate, _video_meta_key(route_name, segment_num, camera_key)
+  return None, None
+
+
+def _is_video_protected(meta: dict, route_name: str, segment_num: int, camera_key: str) -> bool:
+  entry = meta.get(_video_meta_key(route_name, segment_num, camera_key), {})
+  return bool(entry.get("protected", False)) if isinstance(entry, dict) else False
+
+
+def _set_video_protection(meta: dict, route_name: str, segment_num: int, camera_key: str, protected: bool) -> dict:
+  key = _video_meta_key(route_name, segment_num, camera_key)
+  existing = meta.get(key, {})
+  if not isinstance(existing, dict):
+    existing = {}
+  if protected:
+    existing["protected"] = True
+    existing["updatedAt"] = int(time.time())
+    meta[key] = existing
+  else:
+    if key in meta:
+      existing.pop("protected", None)
+      existing["updatedAt"] = int(time.time())
+      if any(v not in (None, False, "", [], {}) for v in existing.values()):
+        meta[key] = existing
+      else:
+        meta.pop(key, None)
+  return meta
+
+
+def _build_segment_video_info(route_name: str, segment_num: int, segment_dir: str, meta: dict) -> dict | None:
+  cameras = []
+  for camera_key, (filename, label) in VIDEO_FILE_MAP.items():
+    full_path = os.path.join(segment_dir, filename)
+    if os.path.isfile(full_path):
+      cameras.append({
+        "key": camera_key,
+        "label": label,
+        "filename": filename,
+        "protected": _is_video_protected(meta, route_name, segment_num, camera_key),
+      })
+
+  if not cameras:
+    return None
+
+  try:
+    modified_at = int(os.path.getmtime(segment_dir))
+  except OSError:
+    modified_at = 0
+
+  return {
+    "routeName": route_name,
+    "segmentNum": segment_num,
+    "segmentName": f"{route_name}--{segment_num}",
+    "modifiedAt": modified_at,
+    "cameras": cameras,
+  }
+
+
+def _scan_video_library(query: str = "", limit: int = 60) -> list[dict]:
+  if not os.path.isdir(VIDEO_LIBRARY_DIR):
+    return []
+
+  query_lower = query.strip().lower()
+  meta = _load_video_library_meta()
+  routes: dict[str, dict] = {}
+
+  with os.scandir(VIDEO_LIBRARY_DIR) as entries:
+    for entry in entries:
+      if not entry.is_dir():
+        continue
+
+      segment_matches: list[dict] = []
+      match = VIDEO_SEGMENT_RE.fullmatch(entry.name)
+      if match:
+        route_name = match.group("route")
+        segment_info = _build_segment_video_info(route_name, int(match.group("segment")), entry.path, meta)
+        if segment_info is not None:
+          segment_matches.append(segment_info)
+      elif VIDEO_ROUTE_RE.fullmatch(entry.name):
+        route_name = entry.name
+        try:
+          with os.scandir(entry.path) as segment_entries:
+            for segment_entry in segment_entries:
+              if not segment_entry.is_dir() or not segment_entry.name.isdigit():
+                continue
+              segment_info = _build_segment_video_info(route_name, int(segment_entry.name), segment_entry.path, meta)
+              if segment_info is not None:
+                segment_matches.append(segment_info)
+        except OSError:
+          continue
+
+      if not segment_matches:
+        continue
+
+      route_key = segment_matches[0]["routeName"]
+      route_bucket = routes.setdefault(route_key, {
+        "routeName": route_key,
+        "displayName": route_key,
+        "modifiedAt": 0,
+        "segmentCount": 0,
+        "segments": [],
+      })
+      route_bucket["segments"].extend(segment_matches)
+      route_bucket["segmentCount"] = len(route_bucket["segments"])
+      route_bucket["modifiedAt"] = max(route_bucket["modifiedAt"], max(seg["modifiedAt"] for seg in segment_matches))
+
+  route_list = list(routes.values())
+  for route in route_list:
+    route["segments"].sort(key=lambda seg: seg["segmentNum"])
+
+  if query_lower:
+    route_list = [
+      route for route in route_list
+      if query_lower in route["routeName"].lower() or any(query_lower in seg["segmentName"].lower() for seg in route["segments"])
+    ]
+
+  route_list.sort(key=lambda route: route["modifiedAt"], reverse=True)
+  return route_list[:max(1, limit)]
+
+
+def _resolve_video_path(route_name: str, segment_num: int, camera_key: str) -> str | None:
+  video_path, _meta_key = _resolve_video_entry(route_name, segment_num, camera_key)
+  return video_path
+
+
 async def api_capture_status(request: 'web.Request'):
   _verify_access(request)
   return web.json_response({"ok": True, "capture": _capture_status(request.app)})
+
+
+async def api_videos_list(request: 'web.Request'):
+  _verify_access(request)
+  query = str(request.query.get("query", "")).strip()
+  try:
+    limit = int(request.query.get("limit", "60"))
+  except ValueError:
+    limit = 60
+
+  routes = _scan_video_library(query=query, limit=max(1, min(limit, 200)))
+  return web.json_response({
+    "ok": True,
+    "libraryRoot": VIDEO_LIBRARY_DIR,
+    "routes": routes,
+  })
+
+
+async def api_videos_stream(request: 'web.Request'):
+  _verify_access(request)
+  route_name = str(request.query.get("route", "")).strip()
+  camera_key = str(request.query.get("camera", "qcamera")).strip()
+  try:
+    segment_num = int(request.query.get("segment", "0"))
+  except ValueError as exc:
+    raise web.HTTPBadRequest(text="Invalid segment number") from exc
+
+  video_path = _resolve_video_path(route_name, segment_num, camera_key)
+  if video_path is None:
+    raise web.HTTPNotFound(text="Video not found")
+
+  ffmpeg_cmd = [
+    "ffmpeg",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    video_path,
+    "-an",
+    "-movflags",
+    "frag_keyframe+empty_moov+faststart",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-f",
+    "mp4",
+    "pipe:1",
+  ]
+
+  try:
+    proc = await asyncio.create_subprocess_exec(
+      *ffmpeg_cmd,
+      stdout=asyncio.subprocess.PIPE,
+      stderr=asyncio.subprocess.PIPE,
+    )
+  except FileNotFoundError as exc:
+    raise web.HTTPServiceUnavailable(text="ffmpeg is not installed on this device") from exc
+
+  response = web.StreamResponse(
+    status=200,
+    headers={
+      "Content-Type": "video/mp4",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
+  )
+  await response.prepare(request)
+
+  try:
+    assert proc.stdout is not None
+    while True:
+      chunk = await proc.stdout.read(256 * 1024)
+      if not chunk:
+        break
+      await response.write(chunk)
+
+    return_code = await proc.wait()
+    if return_code != 0:
+      stderr = b""
+      if proc.stderr is not None:
+        stderr = await proc.stderr.read()
+      logger.warning("ffmpeg exited with %s for %s: %s", return_code, video_path, stderr.decode("utf-8", errors="ignore"))
+  except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+    proc.kill()
+    raise
+  finally:
+    if proc.returncode is None:
+      proc.kill()
+      await proc.wait()
+    try:
+      await response.write_eof()
+    except (ConnectionResetError, RuntimeError):
+      pass
+
+  return response
+
+
+async def api_videos_protect(request: 'web.Request'):
+  _verify_access(request)
+  payload = await request.json()
+  route_name = str(payload.get("route", "")).strip()
+  camera_key = str(payload.get("camera", "")).strip()
+  try:
+    segment_num = int(payload.get("segment", -1))
+  except ValueError as exc:
+    raise web.HTTPBadRequest(text="Invalid segment number") from exc
+  protected = bool(payload.get("protected", True))
+
+  video_path, meta_key = _resolve_video_entry(route_name, segment_num, camera_key)
+  if video_path is None or meta_key is None:
+    raise web.HTTPNotFound(text="Video not found")
+
+  meta = _load_video_library_meta()
+  _set_video_protection(meta, route_name, segment_num, camera_key, protected)
+  _save_video_library_meta(meta)
+  return web.json_response({
+    "ok": True,
+    "route": route_name,
+    "segment": segment_num,
+    "camera": camera_key,
+    "protected": protected,
+  })
+
+
+async def api_videos_delete(request: 'web.Request'):
+  _verify_access(request)
+  payload = await request.json()
+  route_name = str(payload.get("route", "")).strip()
+  camera_key = str(payload.get("camera", "")).strip()
+  force = bool(payload.get("force", False))
+  try:
+    segment_num = int(payload.get("segment", -1))
+  except ValueError as exc:
+    raise web.HTTPBadRequest(text="Invalid segment number") from exc
+
+  video_path, meta_key = _resolve_video_entry(route_name, segment_num, camera_key)
+  if video_path is None or meta_key is None:
+    raise web.HTTPNotFound(text="Video not found")
+
+  meta = _load_video_library_meta()
+  is_protected = _is_video_protected(meta, route_name, segment_num, camera_key)
+  if is_protected and not force:
+    return web.json_response({
+      "ok": False,
+      "protected": True,
+      "warning": "This video is protected. Confirm again to delete it.",
+    }, status=409)
+
+  try:
+    os.remove(video_path)
+  except FileNotFoundError as exc:
+    raise web.HTTPNotFound(text="Video not found") from exc
+  except OSError as exc:
+    raise web.HTTPInternalServerError(text=f"Failed to delete video: {exc}") from exc
+
+  meta.pop(meta_key, None)
+  _save_video_library_meta(meta)
+  return web.json_response({
+    "ok": True,
+    "deleted": True,
+    "protected": is_protected,
+    "route": route_name,
+    "segment": segment_num,
+    "camera": camera_key,
+  })
 
 
 async def api_capture_start(request: 'web.Request'):
@@ -528,6 +879,10 @@ def main(enable_joystick: bool | None = None):
   app.router.add_get("/api/capture/status", api_capture_status)
   app.router.add_post("/api/capture/start", api_capture_start)
   app.router.add_post("/api/capture/stop", api_capture_stop)
+  app.router.add_get("/api/videos", api_videos_list)
+  app.router.add_get("/api/videos/stream", api_videos_stream)
+  app.router.add_post("/api/videos/protect", api_videos_protect)
+  app.router.add_post("/api/videos/delete", api_videos_delete)
   app.router.add_static('/static', os.path.join(TELEOPDIR, 'static'))
   web.run_app(app, access_log=None, host="0.0.0.0", port=5000, ssl_context=ssl_context)
 

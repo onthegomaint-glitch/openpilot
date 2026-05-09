@@ -85,6 +85,7 @@
             <div class="btn-group w-100" role="group">
               <button id="tab-controls" class="btn btn-light active" type="button">Controls</button>
               <button id="tab-capture" class="btn btn-outline-light" type="button">Data Capture</button>
+              <button id="tab-videos" class="btn btn-outline-light" type="button">Video Library</button>
             </div>
           </div>
           <div class="col-12">
@@ -124,6 +125,24 @@
             <div class="col-sm-3 col-6"><button id="capture-start" class="btn btn-success w-100">Start Capture</button></div>
             <div class="col-sm-3 col-12"><button id="capture-stop" class="btn btn-warning w-100">Stop Capture</button></div>
             <div id="capture-result" class="col-12 command-result">Capture idle</div>
+          </div>
+          <div id="videos-tab" class="row g-3 w-100 d-none">
+            <div class="col-12">
+              <div class="video-library-toolbar">
+                <input id="video-search" type="text" class="token-input mb-0" placeholder="Search route name">
+                <button id="videos-refresh" class="btn btn-outline-light">Refresh</button>
+              </div>
+            </div>
+            <div class="col-12">
+              <video id="library-video" class="library-video" playsinline controls preload="metadata"></video>
+              <div id="library-video-label" class="command-result">Choose a route segment to play.</div>
+            </div>
+            <div class="col-12">
+              <div id="videos-result" class="command-result">Video library idle</div>
+            </div>
+            <div class="col-12">
+              <div id="video-route-list" class="video-route-list"></div>
+            </div>
           </div>
           <div id="sentry-result" class="col-12 command-result">Sentry mode: unknown</div>
           <div id="command-result" class="col-12 command-result">-</div>

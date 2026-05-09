@@ -216,3 +216,110 @@ video {
   border-radius: 8px;
   padding: 8px;
 }
+
+.video-library-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.video-library-toolbar .token-input {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.library-video {
+  width: 100%;
+  border-radius: 12px;
+  background: #000;
+  min-height: 240px;
+}
+
+.video-route-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.video-route-card {
+  background: #171717;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.video-route-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.video-route-name {
+  font-size: 18px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.video-route-time {
+  font-size: 14px;
+  color: #bbb;
+}
+
+.video-segment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.video-segment {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #202020;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.video-segment-name {
+  font-size: 16px;
+}
+
+.video-camera-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.video-camera-item {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.video-protected-badge {
+  display: inline-flex;
+  align-items: center;
+  background: #7a5c00;
+  color: #fff3bf;
+  border: 1px solid #b38a00;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .video-library-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .video-library-toolbar .btn {
+    width: 100%;
+  }
+}
