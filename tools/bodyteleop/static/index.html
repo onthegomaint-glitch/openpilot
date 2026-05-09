@@ -72,11 +72,7 @@
       </div>
       <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
         <div class="panel row controls-panel" id="auth-panel">
-          <div class="col-sm-4 col-12"><input id="auth-username" class="token-input" placeholder="Username"></div>
-          <div class="col-sm-4 col-12"><input id="auth-password" type="password" class="token-input" placeholder="Password"></div>
-          <div class="col-sm-2 col-6"><button id="auth-login" class="btn btn-primary w-100">Login</button></div>
-          <div class="col-sm-2 col-6"><button id="auth-setup" class="btn btn-secondary w-100">Setup</button></div>
-          <div id="auth-result" class="col-12 command-result">Not authenticated</div>
+          <div id="auth-result" class="col-12 command-result">Local network access enabled</div>
         </div>
       </div>
       <div class="row" style="padding: 0px 10px 0px 10px; width: 100%;">
@@ -89,7 +85,7 @@
             </div>
           </div>
           <div class="col-12">
-            <input id="local-token" type="password" placeholder="Local token" class="token-input" />
+            <div class="command-result">Authentication disabled while LAN controls are being stabilized.</div>
           </div>
           <div id="controls-tab" class="row g-2 w-100">
             <div class="col-sm-4 col-12"><button id="cmd-remote-start" class="btn btn-danger w-100">Request Remote Start</button></div>

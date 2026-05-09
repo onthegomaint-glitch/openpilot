@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import hashlib
 import ipaddress
 import json
 import logging
 import os
 import re
-import secrets
 import ssl
 import subprocess
 import sys
@@ -50,11 +48,6 @@ except ModuleNotFoundError:
     write_remote_start_status,
   )
 
-try:
-  from openpilot.tools.bodyteleop.auth_config import read_auth_config, write_auth_config
-except ModuleNotFoundError:
-  from tools.bodyteleop.auth_config import read_auth_config, write_auth_config
-
 logger = logging.getLogger("bodyteleop")
 logging.basicConfig(level=logging.INFO)
 
@@ -66,8 +59,6 @@ COMMAND_PARAMS = {
   "charge_stop": "LanChargeStopRequested",
   "sentry_toggle": "LanSentryModeEnabled",
 }
-SESSION_COOKIE = "lan_session"
-SESSION_TTL_SECONDS = 60 * 60 * 24
 CAPTURE_DIR = "/data/bluelink_captures"
 VIDEO_LIBRARY_DIR = "/data/media/0/realdata"
 VIDEO_LIBRARY_META_PATH = "/data/media/0/video_library_meta.json"
@@ -101,53 +92,10 @@ def _is_private_request(request: 'web.Request') -> bool:
     return False
 
 
-def _expected_token() -> str:
-  if Params is not None:
-    raw = Params().get("DongleId") or "sunnypilot-local"
-  else:
-    raw = "sunnypilot-local"
-  return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-
-
-def _is_authorized(request: 'web.Request') -> bool:
-  token = request.headers.get("X-Local-Token") or request.query.get("token")
-  return token == _expected_token()
-
-
-def _verify_local_auth(request: 'web.Request'):
-  if not _is_private_request(request):
-    raise web.HTTPForbidden(text="Local network access only")
-  if not _is_authorized(request):
-    raise web.HTTPUnauthorized(text="Invalid token")
-
-
-def _hash_password(password: str, salt: str) -> str:
-  return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000).hex()
-
-
-def _verify_session(request: 'web.Request') -> bool:
-  session_token = request.cookies.get(SESSION_COOKIE)
-  if not session_token:
-    return False
-
-  sessions = request.app["sessions"]
-  session = sessions.get(session_token)
-  if session is None:
-    return False
-
-  now = int(time.time())
-  if now > session["expiresAt"]:
-    del sessions[session_token]
-    return False
-  return True
-
-
 def _verify_access(request: 'web.Request'):
   if not _is_private_request(request):
     raise web.HTTPForbidden(text="Local network access only")
-  if _verify_session(request) or _is_authorized(request):
-    return
-  raise web.HTTPUnauthorized(text="Login required")
+  return
 
 
 ## UTILS
@@ -297,72 +245,23 @@ async def api_status(request: 'web.Request'):
 
 
 async def api_auth_status(request: 'web.Request'):
-  params = request.app["params"]
-  auth_cfg = read_auth_config(params)
   return web.json_response({
     "ok": True,
-    "setupRequired": "username" not in auth_cfg,
-    "authenticated": _verify_session(request),
+    "setupRequired": False,
+    "authenticated": True,
   })
 
 
 async def api_auth_setup(request: 'web.Request'):
-  if not _is_private_request(request):
-    raise web.HTTPForbidden(text="Local network access only")
-  params = request.app["params"]
-  if params is None:
-    return web.json_response({"ok": False, "error": "Params backend unavailable on this host"}, status=503)
-
-  auth_cfg = read_auth_config(params)
-  if "username" in auth_cfg:
-    return web.json_response({"ok": False, "error": "Auth already configured"}, status=409)
-
-  payload = await request.json()
-  username = str(payload.get("username", "")).strip()
-  password = str(payload.get("password", ""))
-  if len(username) < 3 or len(password) < 8:
-    return web.json_response({"ok": False, "error": "Username/password too short"}, status=400)
-
-  salt = secrets.token_hex(16)
-  write_auth_config(params, {
-    "username": username,
-    "salt": salt,
-    "passwordHash": _hash_password(password, salt),
-  })
   return web.json_response({"ok": True})
 
 
 async def api_auth_login(request: 'web.Request'):
-  if not _is_private_request(request):
-    raise web.HTTPForbidden(text="Local network access only")
-  params = request.app["params"]
-  auth_cfg = read_auth_config(params)
-  if "username" not in auth_cfg:
-    return web.json_response({"ok": False, "error": "Run setup first"}, status=400)
-
-  payload = await request.json()
-  username = str(payload.get("username", "")).strip()
-  password = str(payload.get("password", ""))
-
-  if username != auth_cfg["username"]:
-    return web.json_response({"ok": False, "error": "Invalid credentials"}, status=401)
-  if _hash_password(password, auth_cfg["salt"]) != auth_cfg["passwordHash"]:
-    return web.json_response({"ok": False, "error": "Invalid credentials"}, status=401)
-
-  token = secrets.token_urlsafe(32)
-  request.app["sessions"][token] = {"username": username, "expiresAt": int(time.time()) + SESSION_TTL_SECONDS}
-  response = web.json_response({"ok": True})
-  response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Strict", max_age=SESSION_TTL_SECONDS, secure=False)
-  return response
+  return web.json_response({"ok": True})
 
 
 async def api_auth_logout(request: 'web.Request'):
-  token = request.cookies.get(SESSION_COOKIE)
-  if token:
-    request.app["sessions"].pop(token, None)
-  response = web.json_response({"ok": True})
-  response.del_cookie(SESSION_COOKIE)
-  return response
+  return web.json_response({"ok": True})
 
 
 async def api_command(request: 'web.Request'):
@@ -868,11 +767,10 @@ def main(enable_joystick: bool | None = None):
   app = web.Application()
   app["params"] = Params() if Params is not None else None
   app["status_sm"] = messaging.SubMaster(["carState"]) if messaging is not None else None
-  app["sessions"] = {}
   app["capture_proc"] = None
   app["capture_log_handle"] = None
   app["capture_meta"] = {}
-  logger.info("Local control token: %s", _expected_token())
+  logger.info("LAN control auth disabled for local network use")
   app.router.add_get("/", index)
   app.router.add_get("/ping", ping, allow_head=True)
   app.router.add_post("/offer", offer)
