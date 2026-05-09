@@ -215,7 +215,10 @@ def _read_vehicle_status(sm) -> dict:
   remote_start_status = {}
   if Params is not None:
     cap = Params()
-    sentry_enabled = bool(cap.get_bool("LanSentryModeEnabled"))
+    try:
+      sentry_enabled = bool(cap.get_bool("LanSentryModeEnabled"))
+    except Exception:
+      sentry_enabled = False
     remote_start_config = read_remote_start_config(cap)
     remote_start_status = read_remote_start_status(cap)
 
