@@ -106,6 +106,42 @@ function setupCameraFallback() {
   scheduleSnapshotFallback("Live video unavailable offroad. Showing snapshot fallback.");
 }
 
+function latestCommandStatus(commandStatuses, names) {
+  let latest = null;
+  names.forEach((name) => {
+    const status = commandStatuses[name];
+    if (!status || !status.state) {
+      return;
+    }
+    const updatedAt = Number(status.updatedAt || 0);
+    if (!latest || updatedAt >= latest.updatedAt) {
+      latest = { name, status, updatedAt };
+    }
+  });
+  return latest;
+}
+
+function formatCommandStatus(name, status) {
+  if (!status || !status.state) {
+    return "";
+  }
+
+  const reason = status.reason || "updated";
+  if (name === "remote_start") {
+    return `remote start ${status.state}: ${reason}`;
+  }
+  if (name === "charge_start") {
+    return `charge start ${status.state}: ${reason}`;
+  }
+  if (name === "charge_stop") {
+    return `charge stop ${status.state}: ${reason}`;
+  }
+  if (name === "sentry_toggle") {
+    return `sentry ${status.state}: ${reason}`;
+  }
+  return `${name} ${status.state}: ${reason}`;
+}
+
 async function refreshVehicleStatus() {
   if (!isAuthenticated) {
     return;
@@ -122,11 +158,14 @@ async function refreshVehicleStatus() {
 
     const charging = payload.status.charging ? "charging" : "not charging";
     const sentry = payload.status.sentryEnabled ? "enabled" : "disabled";
-    const remote = payload.status.remoteStartStatus || {};
-    const remoteText = remote.state ? ` - remote start ${remote.state}: ${remote.reason || "updated"}` : "";
-    $("#command-result").text(`Battery ${payload.status.batteryPercent}% - ${charging}${remoteText}`);
+    const commandStatuses = payload.status.commandStatuses || {};
+    const latestVehicleCommand = latestCommandStatus(commandStatuses, ["remote_start", "charge_start", "charge_stop"]);
+    const commandText = latestVehicleCommand ? ` - ${formatCommandStatus(latestVehicleCommand.name, latestVehicleCommand.status)}` : "";
+    const sentryStatus = commandStatuses.sentry_toggle || {};
+    const sentryText = sentryStatus.state ? ` (${formatCommandStatus("sentry_toggle", sentryStatus)})` : "";
+    $("#command-result").text(`Battery ${payload.status.batteryPercent}% - ${charging}${commandText}`);
     $("#device-voltage").text(`${payload.status.deviceVoltage ?? 0}V`);
-    $("#sentry-result").text(`Sentry mode: ${sentry}`);
+    $("#sentry-result").text(`Sentry mode: ${sentry}${sentryText}`);
   } catch (e) {
     // Ignore intermittent status polling failures.
   }
@@ -158,9 +197,12 @@ async function sendCommand(name) {
       return;
     }
     const payload = await response.json();
-    $("#command-result").text(`Requested: ${payload.requested}`);
-    if (name === "sentry_toggle" && payload.ok) {
-      $("#sentry-result").text(`Sentry mode: ${payload.enabled ? "enabled" : "disabled"}`);
+    const resultText = payload.state ? formatCommandStatus(payload.requested, payload) : `Requested: ${payload.requested}`;
+    $("#command-result").text(resultText);
+    if (name === "sentry_toggle" && payload.ok && Object.prototype.hasOwnProperty.call(payload, "enabled")) {
+      const sentryMode = payload.enabled ? "enabled" : "disabled";
+      const sentryState = payload.state ? ` (${formatCommandStatus("sentry_toggle", payload)})` : "";
+      $("#sentry-result").text(`Sentry mode: ${sentryMode}${sentryState}`);
     }
     refreshVehicleStatus();
   } catch (e) {

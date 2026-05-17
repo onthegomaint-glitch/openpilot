@@ -4,7 +4,13 @@ import json
 import os
 from typing import Any
 
-from openpilot.common.params import Params
+try:
+  from openpilot.common.params import Params
+except ModuleNotFoundError:
+  try:
+    from common.params import Params
+  except ModuleNotFoundError:
+    Params = None
 
 
 CONFIG_PARAM = "LanRemoteStartConfig"

@@ -20,6 +20,7 @@ except ModuleNotFoundError:
 import wave
 from aiohttp import web
 from aiohttp import ClientSession
+from aiohttp.client_exceptions import ClientConnectorError
 
 BASEDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 try:
@@ -31,25 +32,19 @@ except ModuleNotFoundError:
     Params = None
 
 try:
-  from cereal import messaging
-except Exception:
-  messaging = None
+  from openpilot.tools.bodyteleop.command_service import CommandError, execute_command
+except ModuleNotFoundError:
+  from tools.bodyteleop.command_service import CommandError, execute_command
 
 try:
   from openpilot.tools.bodyteleop.remote_start_status import (
     read_remote_start_config,
     read_remote_start_status,
-    trigger_remote_start_request,
-    write_remote_start_config,
-    write_remote_start_status,
   )
 except ModuleNotFoundError:
   from tools.bodyteleop.remote_start_status import (
     read_remote_start_config,
     read_remote_start_status,
-    trigger_remote_start_request,
-    write_remote_start_config,
-    write_remote_start_status,
   )
 
 logger = logging.getLogger("bodyteleop")
@@ -57,12 +52,6 @@ logging.basicConfig(level=logging.INFO)
 
 TELEOPDIR = f"{BASEDIR}/tools/bodyteleop"
 WEBRTCD_HOST, WEBRTCD_PORT = "localhost", 5001
-COMMAND_PARAMS = {
-  "remote_start": "LanRemoteStartRequested",
-  "charge_start": "LanChargeStartRequested",
-  "charge_stop": "LanChargeStopRequested",
-  "sentry_toggle": "LanSentryModeEnabled",
-}
 CAPTURE_DIR = "/data/bluelink_captures"
 VIDEO_LIBRARY_DIR = "/data/media/0/realdata"
 VIDEO_LIBRARY_META_PATH = "/data/media/0/video_library_meta.json"
@@ -89,6 +78,32 @@ class StreamRequestBody:
   cameras: list[str]
   bridge_services_in: list[str] = dataclasses.field(default_factory=list)
   bridge_services_out: list[str] = dataclasses.field(default_factory=list)
+
+
+def _load_messaging():
+  if os.getenv("BODYTELEOP_DISABLE_MESSAGING", "0") == "1":
+    logger.info("BODYTELEOP_DISABLE_MESSAGING=1, skipping cereal.messaging import")
+    return None
+
+  try:
+    from cereal import messaging as cereal_messaging
+  except Exception as err:
+    logger.warning("cereal.messaging unavailable: %s", err)
+    return None
+
+  return cereal_messaging
+
+
+def _create_status_sm():
+  messaging = _load_messaging()
+  if messaging is None:
+    return None
+
+  try:
+    return messaging.SubMaster(["carState"])
+  except Exception as err:
+    logger.warning("failed to create carState SubMaster: %s", err)
+    return None
 
 
 def _is_private_request(request: 'web.Request') -> bool:
@@ -245,6 +260,29 @@ def _read_vehicle_status(sm) -> dict:
   }
 
 
+def _command_status_from_result(result) -> dict:
+  return {
+    "state": result.state,
+    "reason": result.reason,
+    "updatedAt": result.requested_at,
+    "details": result.details,
+  }
+
+
+def _read_command_statuses(app, vehicle_status: dict) -> dict:
+  cached_statuses = dict(app.get("command_statuses", {}))
+  cached_statuses["remote_start"] = vehicle_status.get("remoteStartStatus", {})
+  cached_statuses["sentry_toggle"] = {
+    "state": "completed",
+    "reason": "sentry state updated",
+    "updatedAt": cached_statuses.get("sentry_toggle", {}).get("updatedAt", 0),
+    "details": {
+      "enabled": vehicle_status.get("sentryEnabled", False),
+    },
+  }
+  return cached_statuses
+
+
 async def api_config(request: 'web.Request'):
   _verify_access(request)
   return web.json_response({
@@ -257,6 +295,7 @@ async def api_status(request: 'web.Request'):
   _verify_access(request)
   sm = request.app["status_sm"]
   status = _read_vehicle_status(sm)
+  status["commandStatuses"] = _read_command_statuses(request.app, status)
   status["statusAvailable"] = True
   return web.json_response({"ok": True, "status": status})
 
@@ -284,47 +323,24 @@ async def api_auth_logout(request: 'web.Request'):
 async def api_command(request: 'web.Request'):
   _verify_access(request)
   command = request.match_info["name"]
-  if command not in COMMAND_PARAMS:
-    raise web.HTTPBadRequest(text="Unknown command")
-
   params = request.app["params"]
-  if params is None:
-    return web.json_response({"ok": False, "error": "Params backend unavailable on this host"}, status=503)
   payload = {}
   try:
     payload = await request.json()
   except Exception:
     payload = {}
 
-  if command == "sentry_toggle":
-    current = params.get_bool("LanSentryModeEnabled")
-    params.put_bool("LanSentryModeEnabled", not current)
-    return web.json_response({"ok": True, "requested": command, "enabled": (not current)})
+  try:
+    result = execute_command(command, payload, params)
+  except CommandError as err:
+    message = str(err)
+    if message == "Unknown command":
+      raise web.HTTPBadRequest(text=message) from err
+    status = 503 if "Params backend unavailable" in message else 400
+    return web.json_response({"ok": False, "error": message}, status=status)
 
-  if command == "remote_start" and isinstance(payload, dict):
-    ac_cfg = payload.get("ac", {})
-    if isinstance(ac_cfg, dict):
-      safe_cfg = {
-        "enabled": bool(ac_cfg.get("enabled", True)),
-        "temperatureC": float(ac_cfg.get("temperatureC", 21.0)),
-        "fanLevel": int(ac_cfg.get("fanLevel", 2)),
-        "frontDefrost": bool(ac_cfg.get("frontDefrost", False)),
-      }
-      write_remote_start_config(params, safe_cfg)
-      write_remote_start_status(params, {
-        "state": "requested",
-        "reason": "waiting for vehicle-side worker",
-        "updatedAt": int(time.time()),
-        "config": safe_cfg,
-      })
-      trigger_remote_start_request(params)
-      return web.json_response({"ok": True, "requested": command})
-
-  command_param = COMMAND_PARAMS[command]
-  params.put_bool(command_param, False)
-  params.put_bool(command_param, True)
-
-  return web.json_response({"ok": True, "requested": command})
+  request.app.setdefault("command_statuses", {})[result.command] = _command_status_from_result(result)
+  return web.json_response(result.to_response())
 
 
 def _capture_status(app) -> dict:
@@ -838,10 +854,32 @@ async def offer(request: 'web.Request'):
 
   logger.info("Sending offer to webrtcd...")
   webrtcd_url = f"http://{WEBRTCD_HOST}:{WEBRTCD_PORT}/stream"
-  async with ClientSession() as session, session.post(webrtcd_url, data=body_json) as resp:
-    assert resp.status == 200
-    answer = await resp.json()
-    return web.json_response(answer)
+  try:
+    async with ClientSession() as session, session.post(webrtcd_url, data=body_json) as resp:
+      text = await resp.text()
+      if resp.status != 200:
+        detail = text[:4000]
+        logger.error("webrtcd POST /stream -> %s: %s", resp.status, detail[:500])
+        return web.json_response(
+          {"error": "webrtcd failed", "status": resp.status, "detail": detail},
+          status=502,
+        )
+      try:
+        answer = json.loads(text)
+      except json.JSONDecodeError:
+        logger.error("webrtcd returned non-JSON: %s", text[:500])
+        return web.json_response({"error": "webrtcd returned non-JSON", "detail": text[:2000]}, status=502)
+      return web.json_response(answer)
+  except ClientConnectorError as e:
+    logger.error("cannot connect to webrtcd at %s (%s). Is webrtcd running on the device?", webrtcd_url, e)
+    return web.json_response(
+      {
+        "error": "webrtcd unreachable",
+        "hint": "Start webrtcd while offroad (openpilot manager) or: python3 -m system.webrtc.webrtcd",
+        "url": webrtcd_url,
+      },
+      status=502,
+    )
 
 
 def main(enable_joystick: bool | None = None):
@@ -854,13 +892,18 @@ def main(enable_joystick: bool | None = None):
 
   # App needs to be HTTPS for microphone and audio autoplay to work on the browser
   ssl_context = create_ssl_context()
+  if ssl_context is None:
+    logger.warning(
+      "HTTPS disabled (cert/OpenSSL issue). Use http://<device-ip>:5000 — https:// will show ERR_SSL_PROTOCOL_ERROR."
+    )
 
   app = web.Application()
   app["params"] = Params() if Params is not None else None
-  app["status_sm"] = messaging.SubMaster(["carState"]) if messaging is not None else None
+  app["status_sm"] = _create_status_sm()
   app["capture_proc"] = None
   app["capture_log_handle"] = None
   app["capture_meta"] = {}
+  app["command_statuses"] = {}
   app["snapshot_cache"] = {}
   logger.info("LAN control auth disabled for local network use")
   app.router.add_get("/", index)
